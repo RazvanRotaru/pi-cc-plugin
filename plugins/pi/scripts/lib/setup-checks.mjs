@@ -10,7 +10,7 @@ import { spawn } from "node:child_process";
 import { access, copyFile, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolvePi, describePi } from "./pi-spawn.mjs";
+import { piSpawnEnv, resolvePi, describePi } from "./pi-spawn.mjs";
 import { ensureGitignored } from "./gitignore.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -28,7 +28,9 @@ const SPECIALISTS = [
 
 export async function checkPiInstalled({ env }) {
   const desc = resolvePi({ env });
-  const ok = await runProbe(desc.command, [...desc.args, "--version"], { env });
+  const ok = await runProbe(desc.command, [...desc.args, "--version"], {
+    env: piSpawnEnv(desc, env),
+  });
   return {
     name: "pi installed",
     ok,
@@ -59,7 +61,9 @@ export async function checkPiSubagentsInstalled({ env, cwd }) {
   }
   // Authoritative: `pi list` reads pi's settings.
   const desc = resolvePi({ env });
-  const out = await captureProbe(desc.command, [...desc.args, "list"], { env });
+  const out = await captureProbe(desc.command, [...desc.args, "list"], {
+    env: piSpawnEnv(desc, env),
+  });
   if (out !== null && /pi-subagents/i.test(out)) {
     return formatSubagentsResult(true);
   }

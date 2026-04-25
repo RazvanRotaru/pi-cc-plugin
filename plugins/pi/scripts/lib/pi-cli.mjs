@@ -14,7 +14,7 @@
 // (and the parser below) when the real-pi contract is verified.
 
 import { spawn } from "node:child_process";
-import { resolvePi } from "./pi-spawn.mjs";
+import { piSpawnEnv, resolvePi } from "./pi-spawn.mjs";
 
 const RUN_ID_RE = /^run-id:\s*(\S+)\s*$/;
 const STATUS_DIR_RE = /^status-dir:\s*(\S.*?)\s*$/;
@@ -40,12 +40,13 @@ export async function piExec({
   stdout,
   markerTimeoutMs = DEFAULT_MARKER_TIMEOUT_MS,
 }) {
-  const { command, args: piArgs } = resolvePi({ env });
-  const fullArgs = [...piArgs, "exec", JSON.stringify(payload)];
+  const desc = resolvePi({ env });
+  const fullArgs = [...desc.args, "exec", JSON.stringify(payload)];
+  const spawnEnv = piSpawnEnv(desc, env);
 
-  const child = spawn(command, fullArgs, {
+  const child = spawn(desc.command, fullArgs, {
     cwd,
-    env,
+    env: spawnEnv,
     detached: background,
     stdio: ["ignore", "pipe", "pipe"],
   });

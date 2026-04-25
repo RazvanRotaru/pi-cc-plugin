@@ -48,12 +48,31 @@ export function resolvePi({ env = process.env, platform = process.platform } = {
     // (Claude Code's host process inherits whatever's on the system), so
     // we don't blindly use process.execPath — we look for a 20+ node first.
     const node = findCompatibleNode({ env }) ?? process.execPath;
-    return { command: node, args: [pkgScript], source: "package-resolved" };
+    // Pi's child processes (notably its package manager spawning npm) need
+    // to find a matching `npm` on PATH. If we picked a non-default Node,
+    // expose its bin dir so callers can prepend it before spawning pi.
+    const binDir =
+      node === process.execPath ? null : dirname(node);
+    return { command: node, args: [pkgScript], source: "package-resolved", binDir };
   }
 
   // Last resort: rely on $PATH. May fail if Claude Code's subprocess env
   // doesn't include the npm-global bin dir.
-  return { command: "pi", args: [], source: "path" };
+  return { command: "pi", args: [], source: "path", binDir: null };
+}
+
+/**
+ * Build an env object suitable for spawning pi. Prepends the resolved
+ * Node's bin dir to PATH when we picked a non-default Node — otherwise
+ * pi's own child processes (npm in particular) resolve to the host Node,
+ * causing version skew and global-prefix mismatches.
+ */
+export function piSpawnEnv(desc, baseEnv = process.env) {
+  if (!desc.binDir) return { ...baseEnv };
+  const sep = ":";
+  const cur = baseEnv.PATH ?? "";
+  const path = cur.includes(desc.binDir) ? cur : `${desc.binDir}${cur ? sep : ""}${cur}`;
+  return { ...baseEnv, PATH: path };
 }
 
 /**

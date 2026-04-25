@@ -154,21 +154,42 @@ same stdio pipe open. Refactor alongside §2.
 shipped docs). The broker's `/pi:setup` step still prints the JSON for
 manual paste rather than writing it; that's a safe default.
 
-## 7. Pi-subagents install detection
+## 7. Pi-subagents install detection — VERIFIED 2026-04-25
 
-**TBD-VERIFY.** Pi has no `list-extensions` flag in the version we
-inspected (0.70.2). Extensions live in `~/.pi/agent/extensions/` (auto-
-discovered, hot-reloadable via `/reload`) or are loaded with `pi -e`.
+Pi has no `list-extensions` flag. Two install modes exist and they
+conflict if both are run:
 
-Detection alternatives the broker can use:
+| Mode | Command | Lands at | Loaded as |
+|---|---|---|---|
+| pi-managed npm package | `pi install npm:pi-subagents` | `<global-npm-root>/pi-subagents` | extension via pi's `packages[]` |
+| Standalone git clone | `npx pi-subagents` | `~/.pi/agent/extensions/subagent` | extension via auto-discovery |
 
-- File-system check: `~/.pi/agent/extensions/pi-subagents*` exists.
-- Project-local: `.pi/extensions/pi-subagents*` exists.
+Both register the same `subagent` tool, so running both produces:
+`Error: Tool "subagent" conflicts with ...`. Pick one. The pi-managed
+form is preferable because `pi update` keeps it current.
 
-Update `setup-checks.mjs#checkPiSubagentsInstalled` to use file-system
-detection instead of `list-extensions`. The fake-pi fixture's
-`list-extensions` handler was speculative; remove or repoint when this
-lands.
+The README documents `pi install npm:pi-subagents` as the recommended
+path, but its installer message also recommends `npx pi-subagents` as a
+follow-up — that's misleading; do NOT run both.
+
+Detection: `pi list` is authoritative for the npm-managed install
+(reads pi's `packages[]` from settings). FS check at
+`~/.pi/agent/extensions/subagent` covers the standalone install.
+`setup-checks.mjs#checkPiSubagentsInstalled` uses `pi list` today.
+
+## 7b. PATH propagation — VERIFIED 2026-04-25
+
+Pi-coding-agent at startup re-checks installed packages and may spawn
+its own `npm` child (e.g. on first run after install). That child needs
+to find the same npm whose `npm root -g` reported the install location
+— if the PATH puts a different Node's npm first, pi tries to install to
+that npm's global root and fails with EACCES (the common case: Claude
+Code's subprocess inherits system Node 18's npm pointing at
+`/usr/local/lib/node_modules`).
+
+The broker fixes this in `pi-spawn.mjs#piSpawnEnv` by prepending the
+selected Node's bin dir to PATH. Callers (`pi-cli.mjs`, `setup-checks.mjs`)
+must use this when spawning pi.
 
 ## 8. Auth — provider API keys
 
