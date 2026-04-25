@@ -149,7 +149,10 @@ export async function piExec({
       }
       finish(
         new Error(
-          `timed out after ${timeout}ms waiting for subagent-slash-result`,
+          `timed out after ${timeout}ms waiting for pi to acknowledge the slash command. ` +
+            "(This is the dispatch handshake — NOT a subagent runtime cap. " +
+            "If pi takes longer to load on first invocation, raise via " +
+            "PI_BROKER_DISPATCH_TIMEOUT_MS.)",
         ),
       );
     }, timeout);
@@ -176,10 +179,21 @@ export async function piExec({
  * from the broker is forwarded to every agent token in the slash.
  */
 export function buildSlashCommand(payload) {
+  if (payload.worktree) {
+    // pi-subagents' slash command parser only accepts --bg and --fork.
+    // --worktree is a parameter on the underlying `subagent` tool but
+    // isn't surfaced through the slash form — see pi-subagents'
+    // extractExecutionFlags. Until we drive the tool directly via
+    // tool_call (or pi-subagents adds the slash flag), we reject it.
+    throw new Error(
+      "--worktree is not currently supported by /pi:parallel; pi-subagents' " +
+        "slash grammar doesn't surface it. Track upstream or drive the " +
+        "subagent tool directly. See docs/PI_INVOCATION.md.",
+    );
+  }
   const flags = [];
   if (payload.background) flags.push("--bg");
   if (payload.fork) flags.push("--fork");
-  if (payload.worktree) flags.push("--worktree");
   const flagSuffix = flags.length ? ` ${flags.join(" ")}` : "";
 
   // Inline config to attach to each agent token. Top-level --model

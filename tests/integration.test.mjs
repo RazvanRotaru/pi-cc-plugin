@@ -92,7 +92,7 @@ test("chain happy path: 3 steps complete", async () => {
   );
 });
 
-test("parallel happy path: 3 tasks with worktree", async () => {
+test("parallel happy path: 3 tasks (worktree not supported by slash)", async () => {
   await withTempCwd(async (cwd) =>
     withFakePiTmp(async (piTmp) => {
       const env = fakePiEnv({ FAKE_PI_TMPDIR: piTmp });
@@ -102,7 +102,6 @@ test("parallel happy path: 3 tasks with worktree", async () => {
           "test-writer[A]",
           "test-writer[B]",
           "test-writer[C]",
-          "--worktree",
           "--bg",
         ],
         { cwd, env },
@@ -111,7 +110,6 @@ test("parallel happy path: 3 tasks with worktree", async () => {
       const state = JSON.parse(
         await readFile(join(cwd, ".pi-cc-plugin/state.json"), "utf8"),
       );
-      assert.equal(state.jobs[0].worktree, true);
       assert.equal(state.jobs[0].agents.length, 3);
     }),
   );

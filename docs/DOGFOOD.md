@@ -76,13 +76,20 @@ Verify: `cat /tmp/pi-subagents-uid-$(id -u)/async-subagent-runs/<uuid>/status.js
 
 ```
 /pi:chain scout["map the test files"] -> reviewer["summarize what scout produced"] --bg
-/pi:parallel scout["count .mjs files"] scout["count .md files"] --worktree --bg
+/pi:parallel scout["count .mjs files"] scout["count .md files"] --bg
 ```
 
 Expected:
 - Each command returns immediately with a single internal_id.
 - `/pi:status <id>` shows per-step status.
 - `/pi:result <id>` concatenates per-step `output-N.log` under headers.
+
+> **`--worktree` not supported.** Pi-subagents' slash commands accept
+> only `--bg` and `--fork`; `--worktree` is a parameter on the underlying
+> `subagent` tool with no slash-form surface today. The broker rejects
+> `--worktree` with a clear error rather than silently misbehaving. To
+> enable worktree isolation, drive the `subagent` tool directly (not yet
+> wired) or wait for upstream to add the slash flag.
 
 ## 5. Mid-flight cancel
 
