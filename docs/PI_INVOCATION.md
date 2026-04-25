@@ -54,13 +54,55 @@ inside JSON strings. The broker has its own line splitter.
 > work against real pi without an adapter rewrite. That refactor is the
 > first thing M10 dogfooding will surface; tracking as a follow-up.
 
-### Subagent payload shape (still TBD-VERIFY)
+### Subagent payload shape (VERIFIED 2026-04-25 from nicobailon/pi-subagents source)
 
-The exact JSON shape that the `subagent` tool from `pi-subagents` accepts
-hasn't been confirmed against the nicobailon fork. The shapes the broker
-emits today (single / chain / parallel / status / cancel) are speculative.
-Confirm during dogfood and update both this doc and the parser in
-`args.mjs#parseArgs` if they don't match.
+Pi-subagents registers a single `subagent` tool with three modes (per
+`index.ts` header comment):
+
+| Mode | Required fields | Optional |
+|---|---|---|
+| Single | `agent`, `task` | `async`, `model`, `fork`, `cwd`, `output`, `reads`, `skill`, `progress` |
+| Parallel | `tasks[]` (each `{agent, task, ...}`) | `async`, `worktree` |
+| Chain | `chain[]` (each `{agent, task, ...}` — `{previous}` is templated) | `async`, `fork` |
+
+`async` defaults to `false` (configurable via
+`~/.pi/agent/extensions/subagent/config.json#asyncByDefault`). `--bg` in
+the slash form maps to `async: true`.
+
+Pi-subagents also registers slash commands `/run`, `/chain`, `/parallel`,
+`/agents` (the manager TUI), and `/subagents-status` (read-only overlay
+of active runs). These are *inside* pi — to drive them from outside we
+either send the slash command as an RPC `prompt` or call the `subagent`
+tool directly via RPC `tool_call`.
+
+Status / cancel under pi-subagents:
+- Status: `subagent({ action: "status", id })` — see `run-status.ts`.
+- Cancel: send the appropriate event (`SLASH_SUBAGENT_CANCEL_EVENT` per
+  `slash-bridge.ts`) or use the slash overlay's keybindings.
+
+### Where pi-subagents writes state — VERIFIED 2026-04-25
+
+`~/.pi/agent/sessions/<parent-session-id>/<runId>/` (per
+`getSubagentSessionRoot` in `index.ts`). If no parent session, falls back
+to `mkdtempSync(<tmpdir>/pi-subagent-session-)`. The broker should
+read from there, NOT from the speculative
+`<tmpdir>/pi-subagents-<scope>/async-subagent-runs/` path the fake-pi
+fixture uses today.
+
+### Where pi-subagents agents live — VERIFIED 2026-04-25
+
+| Scope | Path | Priority |
+|---|---|---|
+| Builtin (ships with extension) | `~/.pi/agent/extensions/subagent/agents/` | Lowest |
+| User | `~/.pi/agent/agents/{name}.md` | Medium |
+| Project | `.pi/agents/{name}.md` (searches up) | Highest |
+
+Our `/pi:setup` scaffolds into `.pi/agents/` — correct, project scope.
+
+Builtin agents the extension ships: `scout`, `planner`, `worker`,
+`reviewer`, `context-builder`, `researcher`, `delegate`, `oracle`,
+`oracle-executor`. Our seeds (architect, test-writer, etc.) override
+nothing — they sit alongside the builtins.
 
 ## 3. Where pi writes durable state
 
