@@ -77,19 +77,33 @@ Verify: `cat /tmp/pi-subagents-uid-$(id -u)/async-subagent-runs/<uuid>/status.js
 ```
 /pi:chain scout["map the test files"] -> reviewer["summarize what scout produced"] --bg
 /pi:parallel scout["count .mjs files"] scout["count .md files"] --bg
+/pi:parallel scout["count js files"] scout["count md files"] --worktree --bg
 ```
 
 Expected:
 - Each command returns immediately with a single internal_id.
 - `/pi:status <id>` shows per-step status.
 - `/pi:result <id>` concatenates per-step `output-N.log` under headers.
+- `--worktree` requires a clean git working tree (pi-subagents' check)
+  and runs each step in an isolated `/tmp/pi-worktree-<runId>-<n>` that
+  gets cleaned up after the run. The plugin dispatches via a tool-call
+  prompt (LLM-forwarded JSON) since pi-subagents' slash grammar doesn't
+  expose `--worktree` natively. Adds ~3-5s of dispatch latency vs slash.
 
-> **`--worktree` not supported.** Pi-subagents' slash commands accept
-> only `--bg` and `--fork`; `--worktree` is a parameter on the underlying
-> `subagent` tool with no slash-form surface today. The broker rejects
-> `--worktree` with a clear error rather than silently misbehaving. To
-> enable worktree isolation, drive the `subagent` tool directly (not yet
-> wired) or wait for upstream to add the slash flag.
+## 4b. GAN flow with the seed agents
+
+```
+/pi:run architect "review plugins/pi/scripts/lib/pi-cli.mjs and propose 2 simplifications" --bg
+/pi:status job-N           # poll until completed
+/pi:result job-N           # read the architect's brief
+```
+
+Expected: the architect specialist (project-local in `.pi/agents/`)
+produces a brief. Same for `test-writer`, `test-reviewer`, `implementer`,
+`code-reviewer`, `ci-triage`. Specialists default to claude models per
+their seed frontmatter — pi will fall back to the workspace's
+`~/.pi/agent/settings.json#agentOverrides` if the model isn't reachable
+(e.g. claude.ai not auth'd, then OpenRouter only).
 
 ## 5. Mid-flight cancel
 
