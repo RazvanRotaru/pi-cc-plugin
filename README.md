@@ -409,8 +409,6 @@ plugins/pi/
   commands/                        # one .md per slash command
   skills/{pi-cc-usage,pi-cc-harness}/SKILL.md
 docs/
-  DESIGN.md                        # architecture + decisions
-  IMPLEMENTATION_PLAN.md           # milestones (M1–M10)
   PI_INVOCATION.md                 # verified contract with real pi
   DOGFOOD.md                       # manual QA script
 ```

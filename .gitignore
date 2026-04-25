@@ -7,5 +7,8 @@ tests/fixtures/runtime/
 .env.*
 !.env.example
 
-# pi-subagents writes output artifacts (scout's context.md etc.) into cwd
+# pi-subagents writes runtime artifacts into cwd:
+#   - context.md  → scout's `output:` default
+#   - progress.md → defaultProgress: true on any agent
 context.md
+progress.md
