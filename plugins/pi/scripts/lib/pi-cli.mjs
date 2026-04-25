@@ -168,9 +168,9 @@ export async function piExec({
       finish(
         new Error(
           `timed out after ${timeout}ms waiting for pi to acknowledge the slash command. ` +
-            "(This is the dispatch handshake — NOT a subagent runtime cap. " +
-            "If pi takes longer to load on first invocation, raise via " +
-            "PI_BROKER_DISPATCH_TIMEOUT_MS.)",
+            "(This is the dispatch handshake — NOT a subagent runtime cap.)\n" +
+            "  Most likely cause: pi-subagents isn't loaded and pi has no /run handler.\n" +
+            "  Run `/pi:setup` to diagnose. To extend the timeout: PI_BROKER_DISPATCH_TIMEOUT_MS=<ms>.",
         ),
       );
     }, timeout);

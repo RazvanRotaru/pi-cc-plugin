@@ -6,9 +6,15 @@ import { addJob } from "../tracked-jobs.mjs";
 import { stateFilePath } from "../state.mjs";
 import { ensureGitignored } from "../gitignore.mjs";
 import { prepareEphemeralAgents } from "../ephemeral-agents.mjs";
+import { preflight } from "../preflight.mjs";
 
 export default async function run(argv, ctx) {
   const { payload, flags } = parseArgs("run", argv);
+
+  // Fail fast if pi or pi-subagents isn't installed — otherwise the
+  // broker would dispatch into thin air and time out 60s+ later with
+  // an opaque "no subagent-slash-result" message.
+  await preflight({ env: ctx.env, cwd: ctx.cwd });
 
   const stateFile = stateFilePath(ctx.cwd);
   const gi = await ensureGitignored(ctx.cwd);

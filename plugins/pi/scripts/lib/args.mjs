@@ -21,6 +21,17 @@ const IDENT_RE = /^[a-zA-Z_][a-zA-Z0-9_-]*$/;
 
 const FLAGS_VALUED = new Set(["model", "cwd", "mcp"]);
 const FLAGS_BOOLEAN = new Set(["bg", "wait", "fork", "worktree", "yes"]);
+// Common guesses that map to canonical flag names so users don't get
+// punished for idiomatic intuition (--foreground/--background are the
+// natural way to say "run synchronously" / "run detached").
+const FLAG_ALIASES = {
+  background: "bg",
+  foreground: "wait",
+  sync: "wait",
+  async: "bg",
+  detach: "bg",
+  detached: "bg",
+};
 
 /**
  * Parse the argv slice for a given action.
@@ -67,7 +78,7 @@ function splitFlags(argv) {
       positional.push(tok);
       continue;
     }
-    const name = match[1];
+    const name = FLAG_ALIASES[match[1]] ?? match[1];
     if (FLAGS_BOOLEAN.has(name)) {
       flags[name] = true;
     } else if (FLAGS_VALUED.has(name)) {
@@ -78,7 +89,12 @@ function splitFlags(argv) {
       flags[name] = next;
       i++;
     } else {
-      throw new Error(`unknown flag: --${name}`);
+      const all = [...FLAGS_BOOLEAN, ...FLAGS_VALUED].sort();
+      const suggestion = closestFlag(name, all);
+      throw new Error(
+        `unknown flag: --${name}${suggestion ? ` (did you mean --${suggestion}?)` : ""}\n` +
+          `  valid flags: ${all.map((f) => `--${f}`).join(", ")}`,
+      );
     }
   }
   // Resolve --bg/--wait into a single mode. Default: bg.
@@ -267,4 +283,45 @@ function parseScalar(v) {
   if (v === "false") return false;
   if (/^-?\d+$/.test(v)) return Number(v);
   return v;
+}
+
+/**
+ * Pick the candidate flag closest to `typo` using a tiny Levenshtein.
+ * Prefers prefix completions (e.g. "workt" → "worktree") over
+ * arbitrarily close substitutions ("workt" → "fork"). Returns null if
+ * no candidate is within edit distance 3.
+ */
+function closestFlag(typo, candidates) {
+  // Prefer a prefix completion if any candidate starts with typo.
+  const prefixHit = candidates.find((c) => c.length > typo.length && c.startsWith(typo));
+  if (prefixHit) return prefixHit;
+
+  let best = null;
+  let bestDist = Number.POSITIVE_INFINITY;
+  for (const c of candidates) {
+    const d = editDistance(typo, c);
+    if (d < bestDist) {
+      bestDist = d;
+      best = c;
+    }
+  }
+  return bestDist <= 3 ? best : null;
+}
+
+function editDistance(a, b) {
+  if (a === b) return 0;
+  const m = a.length;
+  const n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost);
+    }
+  }
+  return dp[m][n];
 }

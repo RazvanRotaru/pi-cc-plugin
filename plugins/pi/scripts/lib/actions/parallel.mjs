@@ -6,9 +6,11 @@ import { addJob } from "../tracked-jobs.mjs";
 import { stateFilePath } from "../state.mjs";
 import { ensureGitignored } from "../gitignore.mjs";
 import { prepareEphemeralAgents } from "../ephemeral-agents.mjs";
+import { preflight } from "../preflight.mjs";
 
 export default async function parallel(argv, ctx) {
   const { payload } = parseArgs("parallel", argv);
+  await preflight({ env: ctx.env, cwd: ctx.cwd });
   const stateFile = stateFilePath(ctx.cwd);
   const gi = await ensureGitignored(ctx.cwd);
   if (gi.updated) ctx.stderr.write(`pi-cc-plugin: ${gi.reason}\n`);
