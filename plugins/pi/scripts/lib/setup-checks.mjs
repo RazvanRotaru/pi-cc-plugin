@@ -42,26 +42,26 @@ export async function checkPiInstalled({ env }) {
 /**
  * Check whether the pi-subagents extension is present.
  *
- * Pi has no `list-extensions` flag — extensions are auto-discovered from
- * `~/.pi/agent/extensions/` (global) or `.pi/extensions/` (project-local)
- * per `docs/extensions.md` in pi-coding-agent. We just look on disk.
+ * Pi tracks installed extensions in its settings (~/.pi/agent/settings.json
+ * `packages[]` and project-local .pi/settings.json). Authoritative check
+ * is `pi list`.
  *
- * Test override: env.PI_BROKER_FAKE_EXTENSIONS_DIR points at a dir that
- * fixture tests can populate to simulate the installed/missing states.
+ * Test override: env.PI_BROKER_FAKE_EXTENSIONS_DIR points at a dir whose
+ * contents stand in for the install state. If a file matching pi-subagents
+ * is present in that dir, we report installed; if the dir exists but is
+ * empty, we report missing. This lets fixture tests drive both branches.
  */
 export async function checkPiSubagentsInstalled({ env, cwd }) {
-  // Test override: a fixture dir whose contents stand in for ~/.pi/agent/extensions/.
   if (env.PI_BROKER_FAKE_EXTENSIONS_DIR) {
     return formatSubagentsResult(
       await dirContainsSubagents(env.PI_BROKER_FAKE_EXTENSIONS_DIR),
     );
   }
-  const home = env.HOME ?? process.env.HOME;
-  const candidates = [];
-  if (home) candidates.push(join(home, ".pi/agent/extensions"));
-  if (cwd) candidates.push(join(cwd, ".pi/extensions"));
-  for (const dir of candidates) {
-    if (await dirContainsSubagents(dir)) return formatSubagentsResult(true);
+  // Authoritative: `pi list` reads pi's settings.
+  const desc = resolvePi({ env });
+  const out = await captureProbe(desc.command, [...desc.args, "list"], { env });
+  if (out !== null && /pi-subagents/i.test(out)) {
+    return formatSubagentsResult(true);
   }
   return formatSubagentsResult(false);
 }
