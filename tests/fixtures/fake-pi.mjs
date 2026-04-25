@@ -107,7 +107,11 @@ function handleFrame(line, scenario) {
   }
   if (parsed.type !== "prompt") return;
 
-  const slash = parseSlashCommand(parsed.message ?? "");
+  // Two prompt shapes from the broker:
+  //   1. "/run agent task" / "/chain ..." / "/parallel ..."  — slash form
+  //   2. "Call the `subagent` tool exactly once ... ```json {...} ```" — tool form
+  const slash =
+    parseSlashCommand(parsed.message ?? "") ?? parseToolInvocation(parsed.message ?? "");
   if (!slash) return;
 
   const runId = process.env.FAKE_PI_RUN_ID ?? randomId();
@@ -132,29 +136,52 @@ function handleFrame(line, scenario) {
     }
   }
 
-  // Emit the message_start carrying the slash result.
-  emitFrame({
-    type: "message_start",
-    message: {
-      role: "custom",
-      customType: "subagent-slash-result",
-      content: `Async: ${slash.mode}`,
-      details: {
-        result: {
-          content: [{ type: "text", text: `Async: ${slash.mode}` }],
-          details: {
-            mode: slash.mode,
-            results: [],
-            asyncId: runId,
-            asyncDir,
-          },
+  if (slash.via === "tool") {
+    // Mimic real pi: emit a tool_execution_end carrying the asyncId/asyncDir.
+    emitFrame({ id: parsed.id, type: "response", command: "prompt", success: true });
+    emitFrame({
+      type: "tool_execution_end",
+      toolCallId: "fake.subagent:0",
+      toolName: "subagent",
+      result: {
+        content: [{ type: "text", text: `Async: ${slash.mode}` }],
+        details: {
+          mode: slash.mode,
+          results: [],
+          asyncId: runId,
+          asyncDir,
         },
       },
-      timestamp: Date.now(),
-    },
-  });
-  emitFrame({ type: "message_end", message: { role: "custom", customType: "subagent-slash-result" } });
-  emitFrame({ id: parsed.id, type: "response", command: "prompt", success: true });
+      isError: false,
+    });
+  } else {
+    // Slash form: emit message_start/end with subagent-slash-result custom type.
+    emitFrame({
+      type: "message_start",
+      message: {
+        role: "custom",
+        customType: "subagent-slash-result",
+        content: `Async: ${slash.mode}`,
+        details: {
+          result: {
+            content: [{ type: "text", text: `Async: ${slash.mode}` }],
+            details: {
+              mode: slash.mode,
+              results: [],
+              asyncId: runId,
+              asyncDir,
+            },
+          },
+        },
+        timestamp: Date.now(),
+      },
+    });
+    emitFrame({
+      type: "message_end",
+      message: { role: "custom", customType: "subagent-slash-result" },
+    });
+    emitFrame({ id: parsed.id, type: "response", command: "prompt", success: true });
+  }
 
   const delay = Number(process.env.FAKE_PI_DELAY_MS ?? 0);
 
@@ -237,6 +264,48 @@ function parseSlashCommand(message) {
     default:
       return null;
   }
+}
+
+/**
+ * Recognize the broker's tool-invocation prompt shape:
+ *   "Call the `subagent` tool exactly once with this argument JSON ...
+ *    ```json
+ *    {...}
+ *    ```"
+ * Returns a slash-shaped {mode, steps, via:"tool"} object (or null).
+ */
+function parseToolInvocation(message) {
+  if (!/Call the `subagent` tool/i.test(message)) return null;
+  const m = /```json\s*([\s\S]+?)\s*```/.exec(message);
+  if (!m) return null;
+  let args;
+  try {
+    args = JSON.parse(m[1]);
+  } catch {
+    return null;
+  }
+  if (Array.isArray(args.tasks)) {
+    return {
+      mode: "parallel",
+      steps: args.tasks.map((t) => ({ agent: t.agent, task: t.task })),
+      via: "tool",
+    };
+  }
+  if (Array.isArray(args.chain)) {
+    return {
+      mode: "chain",
+      steps: args.chain.map((s) => ({ agent: s.agent, task: s.task })),
+      via: "tool",
+    };
+  }
+  if (args.agent && args.task) {
+    return {
+      mode: "single",
+      steps: [{ agent: args.agent, task: args.task }],
+      via: "tool",
+    };
+  }
+  return null;
 }
 
 function stripAgentConfig(tok) {

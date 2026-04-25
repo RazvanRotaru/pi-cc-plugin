@@ -57,11 +57,11 @@ test("/pi:chain status reflects per-step progress from pi", async () => {
   );
 });
 
-test("/pi:parallel rejects --worktree (not supported by pi-subagents slash)", async () => {
+test("/pi:parallel --worktree dispatches via tool form", async () => {
   await withTempCwd(async (cwd) =>
     withFakePiTmp(async (piTmp) => {
       const env = fakePiEnv({ FAKE_PI_TMPDIR: piTmp });
-      const { code, stderr } = await runBroker(
+      const { code, stdout } = await runBroker(
         [
           "parallel",
           "test-writer[module A]",
@@ -71,8 +71,14 @@ test("/pi:parallel rejects --worktree (not supported by pi-subagents slash)", as
         ],
         { cwd, env },
       );
-      assert.notEqual(code, 0);
-      assert.match(stderr, /--worktree is not currently supported/);
+      assert.equal(code, 0);
+      assert.match(stdout, /worktree/);
+
+      const state = JSON.parse(
+        await readFile(join(cwd, ".pi-cc-plugin/state.json"), "utf8"),
+      );
+      assert.equal(state.jobs[0].kind, "parallel");
+      assert.equal(state.jobs[0].worktree, true);
     }),
   );
 });

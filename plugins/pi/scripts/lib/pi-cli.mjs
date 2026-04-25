@@ -57,8 +57,18 @@ export async function piExec({
     stdio: ["pipe", "pipe", "pipe"],
   });
 
-  const slash = buildSlashCommand(payload);
-  const promptFrame = { id: "broker-1", type: "prompt", message: slash };
+  // Two dispatch paths:
+  //   - slash form (default): "/run scout 'task' --bg" → pi-subagents'
+  //     extension command handler → emits subagent-slash-result message.
+  //   - tool form (--worktree): instructs pi to call the `subagent` tool
+  //     directly via tool_call. Slower (one LLM hop) but the only path
+  //     that exposes worktree, since pi-subagents' slash grammar doesn't
+  //     accept --worktree.
+  const useToolForm = !!payload.worktree;
+  const message = useToolForm
+    ? buildToolInvocationPrompt(payload)
+    : buildSlashCommand(payload);
+  const promptFrame = { id: "broker-1", type: "prompt", message };
 
   return new Promise((resolveP, rejectP) => {
     let runId = null;
@@ -80,20 +90,28 @@ export async function piExec({
     };
 
     const handleEvent = (parsed) => {
-      // The interesting marker arrives as a `message_start` (or _end) with
-      // role=custom, customType=subagent-slash-result.
-      if (parsed.type !== "message_start" && parsed.type !== "message_end") return;
-      const msg = parsed.message;
-      if (msg?.role !== "custom") return;
-      if (msg.customType !== "subagent-slash-result") return;
-      const inner = msg.details?.result?.details;
+      // Slash form: subagent-slash-result custom message.
+      if (parsed.type === "message_start" || parsed.type === "message_end") {
+        const msg = parsed.message;
+        if (msg?.role === "custom" && msg.customType === "subagent-slash-result") {
+          const inner = msg.details?.result?.details;
+          captureRun(inner);
+          return;
+        }
+      }
+      // Tool form: tool_execution_end with toolName=subagent.
+      if (parsed.type === "tool_execution_end" && parsed.toolName === "subagent") {
+        captureRun(parsed.result?.details);
+      }
+    };
+
+    const captureRun = (inner) => {
       if (!inner?.asyncId || !inner?.asyncDir) return;
       if (runId) return; // Already captured.
       runId = inner.asyncId;
       statusDir = inner.asyncDir;
       // Background dispatch: we have what we need. Close stdin so pi's
-      // LLM loop short-circuits without running the prompt itself.
-      // The subagent is detached and continues regardless.
+      // LLM loop short-circuits. The subagent is detached and continues.
       try {
         child.stdin.end();
       } catch {
@@ -179,18 +197,6 @@ export async function piExec({
  * from the broker is forwarded to every agent token in the slash.
  */
 export function buildSlashCommand(payload) {
-  if (payload.worktree) {
-    // pi-subagents' slash command parser only accepts --bg and --fork.
-    // --worktree is a parameter on the underlying `subagent` tool but
-    // isn't surfaced through the slash form — see pi-subagents'
-    // extractExecutionFlags. Until we drive the tool directly via
-    // tool_call (or pi-subagents adds the slash flag), we reject it.
-    throw new Error(
-      "--worktree is not currently supported by /pi:parallel; pi-subagents' " +
-        "slash grammar doesn't surface it. Track upstream or drive the " +
-        "subagent tool directly. See docs/PI_INVOCATION.md.",
-    );
-  }
   const flags = [];
   if (payload.background) flags.push("--bg");
   if (payload.fork) flags.push("--fork");
@@ -252,6 +258,64 @@ function formatScalar(v) {
  * are present we throw — there's no graceful representation in the
  * grammar today, so it's better to fail loud than silently truncate.
  */
+/**
+ * Build a prompt that asks pi to invoke the `subagent` tool directly with
+ * the given args. Used for --worktree, which pi-subagents doesn't expose
+ * through the slash grammar. The LLM forwards the JSON verbatim into a
+ * tool_call; pi-subagents' subagent tool dispatches the real work and
+ * emits tool_execution_end with the asyncId.
+ *
+ * Robustness note: this path goes through the LLM, so a misaligned
+ * model could in theory mangle the JSON. In practice every model we've
+ * tested (kimi, gpt-5, claude) follows "call the tool with this exact
+ * JSON" precisely. If a deployment hits issues, the model can be
+ * overridden via the orchestrator's --model — but the broker doesn't
+ * pin one here.
+ */
+export function buildToolInvocationPrompt(payload) {
+  const subagentArgs = subagentToolArgs(payload);
+  return (
+    "Call the `subagent` tool exactly once with this argument JSON, " +
+    "then output nothing else. Do NOT modify the JSON.\n\n" +
+    "```json\n" +
+    JSON.stringify(subagentArgs, null, 2) +
+    "\n```"
+  );
+}
+
+function subagentToolArgs(payload) {
+  const flags = {};
+  if (payload.background) flags.async = true;
+  if (payload.fork) flags.context = "fork";
+  if (payload.worktree) flags.worktree = true;
+
+  const inlineConfig = collectInlineConfig(payload);
+  const applyConfig = (step) => {
+    const out = { agent: step.agent, task: step.task };
+    if (inlineConfig.model) out.model = inlineConfig.model;
+    if (inlineConfig.skill) out.skill = inlineConfig.skill;
+    if (inlineConfig.output !== undefined) out.output = inlineConfig.output;
+    if (inlineConfig.reads !== undefined) out.reads = inlineConfig.reads;
+    return out;
+  };
+
+  switch (payload.action) {
+    case "run":
+      return {
+        agent: payload.agent,
+        task: payload.task,
+        ...(inlineConfig.model ? { model: inlineConfig.model } : {}),
+        ...flags,
+      };
+    case "chain":
+      return { chain: payload.steps.map(applyConfig), ...flags };
+    case "parallel":
+      return { tasks: payload.tasks.map(applyConfig), ...flags };
+    default:
+      throw new Error(`pi-cli: unknown payload action: ${payload.action}`);
+  }
+}
+
 function quoteTask(s) {
   const str = String(s);
   if (!str.includes('"')) return `"${str}"`;
