@@ -48,30 +48,69 @@ export function resolvePi({ env = process.env, platform = process.platform } = {
     // (Claude Code's host process inherits whatever's on the system), so
     // we don't blindly use process.execPath — we look for a 20+ node first.
     const node = findCompatibleNode({ env }) ?? process.execPath;
-    // Pi's child processes (notably its package manager spawning npm) need
-    // to find a matching `npm` on PATH. If we picked a non-default Node,
-    // expose its bin dir so callers can prepend it before spawning pi.
-    const binDir =
-      node === process.execPath ? null : dirname(node);
-    return { command: node, args: [pkgScript], source: "package-resolved", binDir };
+    // Pi's child processes need three things on PATH:
+    //   1. The Node binary (for any `node`-shebang scripts pi spawns).
+    //   2. `npm` matching that Node (pi's package manager spawns npm).
+    //   3. `pi` itself — pi-subagents calls spawn("pi", ...) for the
+    //      child subagent process and falls back to PATH.
+    // Items 1+2 share the Node bin dir; item 3 lives under the pi
+    // package's prefix (e.g. ~/.npm-global/bin), which can be DIFFERENT
+    // from the Node bin dir if pi was installed under one prefix and
+    // pi-subagents under another (common when nvm is layered over an
+    // existing ~/.npm-global prefix).
+    const nodeBinDir = node === process.execPath ? null : dirname(node);
+    const piPrefixBinDir = derivePrefixBinFromScript(pkgScript);
+    const binDirs = [nodeBinDir, piPrefixBinDir].filter(Boolean);
+    return { command: node, args: [pkgScript], source: "package-resolved", binDirs };
   }
 
   // Last resort: rely on $PATH. May fail if Claude Code's subprocess env
   // doesn't include the npm-global bin dir.
-  return { command: "pi", args: [], source: "path", binDir: null };
+  return { command: "pi", args: [], source: "path", binDirs: [] };
 }
 
 /**
- * Build an env object suitable for spawning pi. Prepends the resolved
- * Node's bin dir to PATH when we picked a non-default Node — otherwise
- * pi's own child processes (npm in particular) resolve to the host Node,
- * causing version skew and global-prefix mismatches.
+ * Given the absolute path to pi's `dist/cli.js`, derive the npm prefix's
+ * `bin/` directory. The npm install layout is always:
+ *   <prefix>/lib/node_modules/<pkg>/dist/cli.js
+ *   <prefix>/bin/<bin-symlink>
+ * So we split on the LAST occurrence of "/node_modules/" in the path
+ * (the global one — pi's own internal node_modules would be deeper),
+ * trim the trailing "/lib" if present, and append "/bin".
+ */
+function derivePrefixBinFromScript(scriptPath) {
+  const marker = `${sep()}node_modules${sep()}`;
+  const idx = scriptPath.indexOf(marker);
+  if (idx === -1) return null;
+  let prefix = scriptPath.slice(0, idx);
+  if (prefix.endsWith(`${sep()}lib`)) {
+    prefix = prefix.slice(0, -4);
+  }
+  const bin = join(prefix, "bin");
+  return existsSync(bin) ? bin : null;
+}
+
+function sep() {
+  return process.platform === "win32" ? "\\" : "/";
+}
+
+/**
+ * Build an env object suitable for spawning pi. Prepends each entry in
+ * `desc.binDirs` to PATH (Node bin first, then pi's prefix bin if
+ * different). Without this, pi's own child processes (npm, child pi for
+ * subagents) won't find the matching binaries.
  */
 export function piSpawnEnv(desc, baseEnv = process.env) {
-  if (!desc.binDir) return { ...baseEnv };
+  const dirs = desc.binDirs ?? [];
+  if (dirs.length === 0) return { ...baseEnv };
   const sep = ":";
-  const cur = baseEnv.PATH ?? "";
-  const path = cur.includes(desc.binDir) ? cur : `${desc.binDir}${cur ? sep : ""}${cur}`;
+  let path = baseEnv.PATH ?? "";
+  // Prepend in reverse so the first dir ends up leftmost.
+  for (let i = dirs.length - 1; i >= 0; i--) {
+    if (!path.includes(dirs[i])) {
+      path = `${dirs[i]}${path ? sep : ""}${path}`;
+    }
+  }
   return { ...baseEnv, PATH: path };
 }
 
