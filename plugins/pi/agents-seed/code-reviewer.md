@@ -2,7 +2,7 @@
 description: Code-reviewer — adversarial review of the implementer's diff against the architect's brief.
 model: anthropic/claude-opus-4-7
 thinking: high
-tools: read, bash, grep, find, mcp:team-tracking/get_ticket, mcp:team-tracking/append_log, mcp:team-tracking/commit_checkpoint, mcp:team-tracking/release_ticket
+tools: read, bash, grep, find
 skills: clean-code
 maxSubagentDepth: 1
 defaultReads: false
@@ -17,10 +17,9 @@ performance gotchas.
 ## Operating procedure
 
 1. Re-read the architect's brief and the test suite.
-2. Read the implementer's diff (`git diff` against the ticket's base).
-3. For each issue: either fix it (small) or add a punch list to the
-   ticket (large). Don't hold up the merge for cosmetic nitpicks.
-4. `commit_checkpoint`, `release_ticket`.
+2. Read the implementer's diff (`git diff` against the base).
+3. For each issue: either fix it (small) or add a punch list (large).
+   Don't hold up the merge for cosmetic nitpicks.
 
 ## Constraints
 

@@ -133,34 +133,6 @@ export async function checkGitignore({ cwd }) {
   };
 }
 
-/**
- * MCP config registration is interactive — we print a JSON snippet for the
- * user to paste, since the path/format isn't verified yet (see
- * docs/PI_INVOCATION.md §6).
- */
-export async function checkMcpRegistration() {
-  return {
-    name: "team-tracking-mcp registration",
-    ok: false,
-    message:
-      "auto-registration not yet wired (path/format TBD). " +
-      "Paste this into pi's MCP config:\n" +
-      `${JSON.stringify(
-        {
-          mcpServers: {
-            "team-tracking": {
-              command: "node",
-              args: ["/abs/path/to/team-tracking-mcp/dist/server.js"],
-            },
-          },
-        },
-        null,
-        2,
-      )}`,
-    fixable: false,
-  };
-}
-
 export const _internals = { SPECIALISTS, SEEDS_DIR };
 
 async function runProbe(command, args, { env, timeoutMs = 5000 }) {

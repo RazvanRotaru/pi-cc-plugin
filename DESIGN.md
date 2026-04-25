@@ -2,7 +2,7 @@
 
 Claude Code plugin that delegates work to [`pi-subagents`](https://github.com/nicobailon/pi-subagents) (nicobailon fork), the same way [`codex-plugin-cc`](https://github.com/openai/codex-plugin-cc) delegates to Codex. Lets a Claude Code orchestrator run specialists under any model pi supports (Claude, GPT, Gemini, open-source), with real async / parallel / worktree isolation out of the box.
 
-Sister project to `team-tracking-mcp`. This plugin handles *execution*; team-tracking-mcp handles *state*. They compose: pi-spawned specialists write progress to the board via team-tracking-mcp's tools.
+An optional sister project to `team-tracking-mcp` exists, but **this plugin does not depend on it**. If you want progress tracking, install team-tracking-mcp separately and register it with pi yourself; the seeds shipped here don't reference it.
 
 ## Goals
 
@@ -50,7 +50,7 @@ The choice is per-specialist, declared in the specialist's frontmatter. The orch
 
 | Command | Purpose |
 |---|---|
-| `/pi:setup` | One-time: verify pi + pi-subagents, register `team-tracking-mcp` in pi's MCP config, scaffold default specialist agents into `.pi/agents/`. |
+| `/pi:setup` | One-time: verify pi + pi-subagents, scaffold default specialist agents into `.pi/agents/`. |
 | `/pi:run <agent> <task…>` | Delegate one task to one pi agent. `--bg` (default `--bg` for harness use), `--model <m>`, `--fork`, `--cwd <p>`. |
 | `/pi:chain <agent>["task"] -> <agent>["task"] …` | Delegate a chain. Same flags. |
 | `/pi:parallel <agent>["task"] <agent>["task"] …` | Parallel tasks. `--worktree` for isolation. |
@@ -128,9 +128,8 @@ Pi writes durable status files to `<tmpdir>/pi-subagents-<scope>/async-subagent-
 1. **pi installed?** `pi --version`. If missing, print install instructions and stop.
 2. **pi-subagents installed?** Check `pi list-extensions` (or whatever pi's introspection API is — TBD M1). If missing, offer: `pi install npm:pi-subagents`.
 3. **Logged in?** The broker doesn't need pi auth, but pi does. Print whatever login status pi reports.
-4. **team-tracking-mcp registered?** Read pi's MCP config (location TBD — pi has per-user config). If `team-tracking-mcp` isn't registered, offer to add an entry pointing at the local MCP server binary.
-5. **Default specialist agents present?** For each of `architect`, `test-writer`, `test-reviewer`, `implementer`, `code-reviewer`, `ci-triage`, check `.pi/agents/<name>.md`. If missing, offer to scaffold from templates bundled in the plugin (`plugins/pi/agents-seed/<name>.md`).
-6. **`.gitignore` touched?** Ensure `.pi-cc-plugin/` is ignored if `.git/` exists.
+4. **Default specialist agents present?** For each of `architect`, `test-writer`, `test-reviewer`, `implementer`, `code-reviewer`, `ci-triage`, check `.pi/agents/<name>.md`. If missing, offer to scaffold from templates bundled in the plugin (`plugins/pi/agents-seed/<name>.md`).
+5. **`.gitignore` touched?** Ensure `.pi-cc-plugin/` is ignored if `.git/` exists.
 
 Setup prints a summary at the end. No side effects without confirmation.
 
@@ -138,46 +137,50 @@ Setup prints a summary at the end. No side effects without confirmation.
 
 The plugin ships seed agent files at `plugins/pi/agents-seed/<role>.md`. `/pi:setup` copies them into the workspace's `.pi/agents/` on user approval. Users customize from there; our seed never overwrites existing files.
 
-Each seed declares the role's default model, thinking level, tools (including the `team-tracking-mcp` MCP tools), skills, and `maxSubagentDepth`. Example (`architect.md`):
+Each seed declares the role's default model, thinking level, tools, skills, and `maxSubagentDepth`. Example (`architect.md`):
 
 ```markdown
 ---
 description: Architect — shape contracts, consult on design choices
-model: anthropic/claude-opus-4-6
+model: anthropic/claude-opus-4-7
 thinking: high
-tools: read, bash, grep, find, mcp:team-tracking/get_ticket, mcp:team-tracking/list_board, mcp:team-tracking/report_progress, mcp:team-tracking/append_log, mcp:team-tracking/acquire_ticket, mcp:team-tracking/commit_checkpoint, mcp:team-tracking/release_ticket
+tools: read, bash, grep, find
 skills: architecture-review
 maxSubagentDepth: 2
 defaultReads: false
 output: false
 ---
 You are the Architect specialist in a GAN-style orchestrator/specialist pipeline…
-(body copied from harness-task-team/specialists-baseline/architect.md)
 ```
 
-The seed tool list pins every MCP tool the specialist needs from team-tracking-mcp. Without this, pi sandboxes MCP access to nothing, and specialists can't report progress.
+If you want the specialist to interact with an external state board
+(e.g. team-tracking-mcp), add the relevant `mcp:<server>/<tool>` entries
+to the `tools:` line yourself — the shipped seeds stay decoupled.
 
 ## Harness integration contract
 
 The orchestrator (main Claude Code session with `harness-orchestrate` loaded) dispatches to pi as follows:
 
 1. Specialist selection: orchestrator reads the specialist file. If `model` is Claude-runnable, dispatch via Agent tool. Else, dispatch via this plugin.
-2. Pre-dispatch: orchestrator calls `acquire_ticket(ref, owner)` on team-tracking-mcp.
-3. Dispatch: `/pi:run <role> "<task spec reference>" --bg`. Task text tells the specialist the ticket ref and the lock token.
-4. Track: orchestrator records the returned pi run id in team-tracking-mcp via `append_log`.
-5. Poll: orchestrator calls `get_ticket` + `/pi:status <id>` periodically. Progress arrives via team-tracking-mcp (pulse fields, checkpoints), not via pi.
-6. Complete: when `/pi:status` reports done, orchestrator calls `/pi:result <id>` for the final transcript (optional, mostly for HITL review), and the specialist has already called `release_ticket`.
-7. Crash recovery: if pi run dies without `release_ticket`, the ticket's lock eventually goes stale (TTL). Orchestrator picks up the stale lock, retrieves `recovered_checkpoint`, and dispatches a fresh pi run.
+2. Dispatch: `/pi:run <role> <task brief> --bg`. The task text tells the specialist where to find inputs and where to write outputs (e.g. paths under `.work/<ticket-id>/`).
+3. Poll: orchestrator calls `/pi:status <id>` periodically. Auto-reconciliation flips `state.json` to `completed`/`failed` once pi-subagents finishes.
+4. Complete: `/pi:result <id>` returns the final markdown output (concatenated `output-N.log` for multi-step runs).
+5. Cancel/recovery: `/pi:cancel <id>` SIGTERMs the parent pi-subagents process. The dispatched LLM run is detached, so the orchestrator can move on regardless.
 
-The orchestrator skill is updated out-of-band (in `~/workspace/skills`) to branch on model type. This plugin only provides the slash-command surface and the scaffolding.
+External state tracking (e.g. ticket boards, locks, checkpoints) is out
+of scope for this plugin. If you need it, run a separate MCP server and
+add the relevant `mcp:<server>/<tool>` entries to your specialist seed
+files. The orchestrator skill knows how to thread context through.
+
+This plugin only provides the slash-command surface and the scaffolding.
 
 ## Failure modes
 
 - **Pi not installed** — `/pi:setup` detects and prints install instructions; every other command errors fast with `EPI_NOT_FOUND`.
-- **Pi hangs** — pi is a subprocess; standard timeout + kill behaviors apply. Broker has a configurable timeout; on timeout it marks our metadata `status: "timeout"` but does not touch team-tracking-mcp (the ticket's lock TTL handles recovery).
-- **Pi exits with non-zero** — broker captures exit code, writes `status: "failed"` with stderr tail in our state file. User sees this via `/pi:status <id>`.
-- **Pi run dir disappears** — `<tmpdir>` got cleaned up by OS. `/pi:status <id>` degrades gracefully: reports "status: unknown, pi artifacts gone".
-- **MCP server missing** — specialists fail inside pi when they try to call team-tracking tools. Pi run ends with error. Orchestrator sees via `/pi:result` + the ticket's unchanged lock state.
+- **Pi hangs** — pi is a subprocess; standard timeout + kill behaviors apply. Broker dispatch has a 15s timeout waiting for `subagent-slash-result`; if it doesn't arrive, the broker errors out and pi is killed.
+- **Pi exits with non-zero** — broker captures exit code; if no `subagent-slash-result` was emitted, this surfaces to the user via the broker's error message.
+- **Pi run dir disappears** — `<tmpdir>` got cleaned up by OS. `/pi:status <id>` degrades gracefully: reports "status dir not readable".
+- **Step completed with API error** — pi-subagents marks `state: complete` even when a step's LLM API call returned an error. The render layer surfaces this as `step (error)` and lists the underlying message under `step-errors:`.
 
 ## Security
 

@@ -9,29 +9,21 @@ Set up:
 # Install pi if you don't have it (requires Node ≥20)
 npm i -g @mariozechner/pi-coding-agent
 
-# Install pi-subagents (nicobailon fork)
+# Install pi-subagents (nicobailon fork) — pi's package manager handles it
 pi install npm:pi-subagents
 
 # Configure at least one LLM provider for pi.
 # Easiest: OpenRouter (one key, all models).
 export OPENROUTER_API_KEY=sk-or-...
-# Persist it:
 echo 'export OPENROUTER_API_KEY=sk-or-...' >> ~/.bashrc
-# Or use pi's auth file (0600-secured):
-pi   # then /login → OpenRouter → paste key
+# Or use pi's auth file:
+pi   # then /login → OpenRouter
 
 # Install this plugin into Claude Code
 /plugin marketplace add /path/to/pi-cc-plugin
 /plugin install pi@pi-cc-plugin
+/reload-plugins
 ```
-
-> **Heads up before you start:** `docs/PI_INVOCATION.md` flags that the
-> broker's current `pi-cli.mjs` was written against a `pi exec '<json>'`
-> form that doesn't exist in real pi. Real pi uses `--mode rpc`. The
-> first dogfood run will surface this — the broker needs an adapter
-> rewrite before it actually drives a real pi process. The slash-command
-> surface, args parser, state file, and skills are all real-pi-ready;
-> only `pi-cli.mjs` (and parts of `setup-checks.mjs`) need updating.
 
 Each step below should be tried in a fresh workspace (a throwaway
 `mkdir /tmp/pi-cc-dogfood && cd /tmp/pi-cc-dogfood && git init` works fine).
@@ -42,28 +34,26 @@ Each step below should be tried in a fresh workspace (a throwaway
 /pi:setup --yes
 ```
 
-Expected:
-- `pi installed` ✓
-- `pi-subagents installed` ✓ (after the install command above)
+Expected (all green):
+- `pi installed` ✓ (resolves via npm-global lookup or nvm)
+- `pi-subagents installed` ✓ (after `pi install npm:pi-subagents`)
 - `.gitignore` updated to ignore `.pi-cc-plugin/`
 - 6 specialist seeds copied to `.pi/agents/`
-- `team-tracking-mcp registration` shows the JSON snippet for manual paste
+- `setup done.`
 
-If `pi installed` fails: re-check `which pi`. If `pi-subagents installed`
-fails: `pi list-extensions --json` and confirm what pi reports.
+If `pi installed` fails: `which pi`, `node --version` ≥ 20.
+If `pi-subagents installed` fails: `pi list | grep pi-subagents`.
 
 ## 2. `/pi:run` with a Claude model
 
 ```
-/pi:run worker "Write a one-paragraph haiku about caches" --model anthropic/claude-sonnet-4-6
+/pi:run worker write a one-paragraph haiku about caches --model anthropic/claude-sonnet-4-6 --bg
 ```
 
 Expected:
-- `Started job-001 (pi-run-id <uuid>)` returned within ~2s.
+- `Started job-001 (pi-run-id <uuid>) — agent=worker, model=anthropic/claude-sonnet-4-6`
 - `/pi:status job-001` shows running, then completed (within ~30s).
 - `/pi:result job-001` returns a haiku.
-- Pi's run dir under `<tmpdir>/pi-subagents-*/async-subagent-runs/<uuid>-worker/`
-  contains `status.json`, `result.md`, `log.md`.
 
 ## 3. `/pi:run` with a non-Claude model
 
@@ -71,77 +61,61 @@ This is the load-bearing test for the design — pi is what makes
 non-Claude specialists possible.
 
 ```
-/pi:run worker "Same haiku task" --model openai/gpt-5
+/pi:run worker same haiku task --model openrouter/google/gemini-3-pro-preview --bg
 # or:
-/pi:run worker "Same haiku task" --model google/gemini-2.5-pro
+/pi:run worker same haiku task --model openrouter/openai/gpt-5.5 --bg
 ```
 
 Expected: same shape as step 2, but the result text comes from the
-non-Claude model. Confirm by reading `.pi/agents/worker.md`'s default
-model vs the override.
+non-Claude model. status.json's `steps[].model` field will record
+exactly what we passed.
 
-If pi can't dispatch to the requested model, the run fails fast with a
-clear error in `pi-run-id <uuid>`'s `status.json.error`.
+Verify: `cat /tmp/pi-subagents-uid-$(id -u)/async-subagent-runs/<uuid>/status.json | jq '.steps[].model'`.
 
-## 4. `/pi:run` that exercises team-tracking-mcp
-
-Prereqs: `team-tracking-mcp` is installed in Claude Code AND registered
-with pi (paste the snippet from step 1 into pi's MCP config).
+## 4. `/pi:chain` and `/pi:parallel`
 
 ```
-# In Claude Code, create a ticket
-team-tracking/create_ticket({
-  project: "Dogfood",
-  title: "Confirm pi-driven specialist reports progress",
-  body: "Acquire this ticket. Append two log entries. Release."
-})
-
-# Acquire it from the orchestrator side
-team-tracking/acquire_ticket({ ref: { project: "Dogfood", id: "<id>" }, owner: "manual-qa" })
-
-# Dispatch to a pi specialist
-/pi:run implementer "Acquire ticket Dogfood-<id> with lock token <lt>. Append two log lines (one for 'starting', one for 'done'), then release_ticket." --bg
+/pi:chain scout["map the test files"] -> reviewer["summarize what scout produced"] --bg
+/pi:parallel scout["count .mjs files"] scout["count .md files"] --worktree --bg
 ```
 
 Expected:
-- `/pi:status <job>` shows running, then completed.
-- `team-tracking/get_ticket` shows the two log entries.
-- The lock is released by the specialist.
+- Each command returns immediately with a single internal_id.
+- `/pi:status <id>` shows per-step status.
+- `/pi:result <id>` concatenates per-step `output-N.log` under headers.
 
-If progress entries don't land: the seed agent is missing the
-team-tracking MCP tools in its frontmatter, or pi's MCP config doesn't
-have team-tracking registered.
-
-## 5. Mid-flight kill + recovery
+## 5. Mid-flight cancel
 
 ```
 # Start a long-ish run
-/pi:run worker "Slowly write a 500-word essay about caches" --bg
+/pi:run worker think out loud about caches for 500 words --bg
 
-# Confirm it's running
-/pi:status
+/pi:status                      # confirm it's running
+/pi:cancel job-001              # SIGTERM the pi-subagents parent
 
-# Kill the pi process directly (pretending pi died — simulates a crash)
-ps aux | grep "pi exec" | head -1
-kill -9 <pid>
-
-# From the orchestrator's perspective, the lock is now stale.
-# Wait for the team-tracking-mcp lock TTL to expire (default 10min in tests),
-# OR force-release via the test-only release path.
-
-# Then dispatch a fresh retry
-/pi:run worker "Resume essay from checkpoint at .work/<ref>/checkpoint.md" --bg
+/pi:status job-001              # state shows cancelled
 ```
 
 Expected:
-- The dead run shows up in `/pi:status` as `running` (we don't auto-detect crashes).
-- `/pi:cancel <id>` reconciles the state to whatever pi's status.json says,
-  or marks `cancelled` if pi's status dir is gone.
-- Fresh dispatch succeeds independently.
+- Cancel returns within ~5s (SIGTERM grace).
+- state.json reflects cancelled at top; pi-subagents' status.json may
+  freeze mid-update — render shows `pi-status: running (broker says: cancelled)`.
+
+## 6. Forced model failure surfaces clearly
+
+```
+/pi:run worker test --model openrouter/no-such-model --bg
+/pi:status job-001
+```
+
+Expected:
+- Top line: `completed` (pi-subagents lifecycle ran to its end).
+- Steps line: `worker: complete (error)`.
+- `step-errors:` block shows the underlying API error message.
 
 ## Sign-off
 
-When all five steps pass, tag the release:
+When all six steps pass, tag the release:
 
 ```bash
 npm version patch     # or minor / major

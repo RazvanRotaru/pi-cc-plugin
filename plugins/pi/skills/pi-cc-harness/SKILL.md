@@ -1,13 +1,12 @@
 ---
 name: pi-cc-harness
-description: Harness-specific guidance — when to dispatch via Claude Code's Agent tool vs /pi:run, how to thread a ticket ref + lock token through pi specialists, how to interpret /pi:status and recover from a stale lock.
+description: Harness-specific guidance — when to dispatch via Claude Code's Agent tool vs /pi:run, how to monitor a dispatched specialist, and how to interpret /pi:status.
 ---
 
 # `pi-cc-plugin` for the orchestrator
 
 This skill assumes you're running the GAN-style task-team pipeline
-(`harness-orchestrate` skill) and have `team-tracking-mcp` registered with
-both Claude Code AND pi. Read `pi-cc-usage` first if you haven't.
+(`harness-orchestrate` skill). Read `pi-cc-usage` first if you haven't.
 
 ## The dispatch decision
 
@@ -23,35 +22,21 @@ specialists need to be dispatched by pi so pi can supply the model
 adapter, the MCP context, and the worktree. Claude-side specialists need
 the Agent tool so the orchestrator can stream events directly.
 
-## Threading the ticket ref
+## Threading task context
 
-Every specialist call — pi-side or Claude-side — must carry:
+Every specialist call — pi-side or Claude-side — must carry enough
+context for the specialist to act independently: which task they're
+acting on, where the relevant files are, what the prior step produced.
 
-- The ticket ref (`{ project, id }`).
-- The lock token returned by `acquire_ticket`.
-
-For `/pi:run` dispatches, embed both in the task brief:
-
-```
-/pi:run implementer "Implement ticket AUTOPILOT-123. Lock token: lt_a7b9. Read the ticket via team-tracking/get_ticket and call commit_checkpoint + release_ticket when done. Brief lives at .work/AUTOPILOT-123/architect-brief.md." --bg
-```
-
-The specialist's frontmatter (seeded by `/pi:setup`) already lists the
-team-tracking MCP tools — `get_ticket`, `append_log`, `commit_checkpoint`,
-`release_ticket`. The brief tells it *which* ticket to act on.
-
-## After dispatch
-
-Record the pi run id alongside the ticket via `team-tracking/append_log`:
+For `/pi:run` dispatches, embed the context in the task brief:
 
 ```
-team-tracking/append_log({
-  ref: { project: "Autopilot", id: "AUTO-123" },
-  entry: "dispatched to pi: job-014 (pi-run-id 9b3f...)"
-})
+/pi:run implementer Implement the function from .work/AUTOPILOT-123/architect-brief.md. Tests live at tests/auth.test.mjs. Make them green. --bg
 ```
 
-This makes the connection traceable from either side.
+The specialist sees the entire prompt as their `task` argument. Pi reads
+agent frontmatter from `.pi/agents/implementer.md` for its model,
+thinking level, tools, etc.
 
 ## Polling
 
@@ -60,26 +45,15 @@ You have two state sources and they answer different questions:
 | Question | Source |
 |---|---|
 | Is pi still running? Per-step progress? | `/pi:status <id>` |
-| What has the specialist *reported* about its work? | `team-tracking/get_ticket` |
-| What was the final transcript? | `/pi:result <id>` |
-
-Always check the ticket *first*. The board is the record. `/pi:status` is
-useful for "did the process die?" but not for "what is the work doing?".
+| What did the specialist actually produce? | `/pi:result <id>` |
 
 Polling cadence depends on the specialist. Architect/test-writer specialists
 are usually 1-3 minutes; implementer can be 10+. Don't poll faster than
-every ~30s — the board doesn't update that often anyway.
+every ~30s — pi's status doesn't update that often anyway.
 
-## Recovering from a stale lock
-
-If a pi run dies without calling `release_ticket`, the lock eventually
-expires (TTL on the team-tracking-mcp side). When you see a stale lock:
-
-1. Read `recovered_checkpoint` from the ticket.
-2. Decide: retry the same role from checkpoint, or escalate?
-3. If retry: `/pi:run <role> "Resume ticket <ref> from checkpoint at .work/<ref>/checkpoint.md. Lock token: <new lt>." --bg`.
-
-Don't reuse the dead run's pi-run-id. Each retry is a new pi run.
+`/pi:status` auto-reconciles `state.json` against pi's status. So if you
+poll and see `completed`, that's authoritative even if you didn't run any
+explicit cancel/result command in between.
 
 ## When `/pi:cancel` is the right move
 
@@ -90,17 +64,23 @@ Don't reuse the dead run's pi-run-id. Each retry is a new pi run.
 
 When NOT to cancel:
 
-- Just because the run is "taking longer than I expected." Check the
-  ticket log first — the specialist may be working productively.
+- Just because the run is "taking longer than I expected." Read the
+  `output-N.log` first via `/pi:result` — the specialist may be working
+  productively.
 - The user said "stop everything." That's a `/exit` — let pi runs
   complete on their own; they're already detached.
+
+## Surfacing errors
+
+`/pi:status` displays per-step errors inline as `step (error)` and
+under a `step-errors:` block. Pi-subagents sometimes marks runs as
+`complete` even when a step's API call failed (e.g. wrong model name,
+provider returning HTTP 400). Always check for that flag before treating
+a "completed" run as a real success.
 
 ## Composes with
 
 - **`harness-orchestrate`** (in `~/workspace/skills`) — the top-level
   orchestrator skill. Owns the GAN pipeline state machine. This skill is
   the *integration* layer between that pipeline and pi.
-- **`team-tracking-mcp`** — provides the board, locks, and checkpoints.
-  The harness skill assumes you've configured it on both Claude Code AND
-  pi (via `/pi:setup`'s MCP registration step).
 - **`pi-cc-usage`** — the per-command reference. Read first.

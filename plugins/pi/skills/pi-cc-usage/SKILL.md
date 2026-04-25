@@ -10,10 +10,6 @@ running under any model `pi` supports — Claude, GPT, Gemini, or open-source.
 The pi subagent is a real subprocess; the orchestrator never blocks on it
 unless you explicitly pass `--wait`.
 
-This skill explains *the commands*. For the GAN-style harness flow that
-uses these commands, load `pi-cc-harness` separately (it composes with
-`harness-orchestrate` and `team-tracking-mcp`).
-
 ## When to reach for which command
 
 | Goal | Command |
@@ -38,8 +34,8 @@ stream pi's output and block until pi exits.
 The grammar mirrors pi-subagents' slash syntax — muscle memory transfers:
 
 ```
-agent[task]                      # one bracketed step
-->                               # chain separator (used by /pi:chain)
+agent[task]                      # one bracketed step (chain/parallel only)
+->                               # chain or parallel separator
 [key=value,key=value]            # inline config (model, fork, etc.)
 --bg | --wait                    # mutually exclusive
 --model <id>                     # override the agent's default model
@@ -51,13 +47,13 @@ agent[task]                      # one bracketed step
 ## Examples
 
 ```
-/pi:run worker "fix the auth bug in src/login.ts"
-/pi:run worker "fix the auth bug" --model openai/gpt-5 --bg
+/pi:run worker fix the auth bug in src/login.ts
+/pi:run worker fix the auth bug --model openrouter/google/gemini-3-pro-preview --bg
 /pi:chain scout["map the affected files"] -> planner["draft a refactor plan"] -> worker["execute the plan"]
 /pi:parallel test-writer["module A"] test-writer["module B"] --worktree
-/pi:status                       # list everything
+/pi:status                       # list everything (auto-reconciles with pi)
 /pi:status job-002               # inspect one
-/pi:result job-002               # final markdown
+/pi:result job-002               # final output (concatenated for multi-step runs)
 /pi:cancel job-002               # SIGTERM, escalates to SIGKILL
 ```
 
@@ -76,31 +72,35 @@ accept any unambiguous prefix of the pi run id, so `cafef0` matches
 
 - Per-workspace state file: `./.pi-cc-plugin/state.json`. The plugin
   gitignores it on first write.
-- Pi's per-run artifacts live under `<tmpdir>/pi-subagents-<scope>/async-subagent-runs/<id>-<slug>/`.
-  The plugin reads `status.json`, `result.md`, and `log.md` from there.
+- Pi-subagents writes per-run artifacts to
+  `<tmpdir>/pi-subagents-uid-<uid>/async-subagent-runs/<runId>/`.
+  The plugin reads `status.json`, `output-N.log`, and
+  `subagent-log-<runId>.md` from there.
+- Auto-reconciliation: every read (`/pi:status`, `/pi:result`,
+  `/pi:cancel`) syncs `state.json` against pi's status. Stale `running`
+  entries get back-filled to `completed` automatically.
 - If pi's run dir is cleaned up by the OS, `/pi:status` says so explicitly
   rather than guessing.
 
 ## Failure modes you'll see
 
-- `pi-broker: pi exited (code N) before emitting run-id+status-dir markers`
+- `pi-broker: pi exited (code N) before emitting subagent-slash-result`
   — pi crashed at startup. Most often: `/pi:setup` hasn't been run, or
   pi-subagents isn't installed. Run `/pi:setup` to triage.
-- `pi-broker: timed out after 5000ms waiting for pi run-id/status-dir markers`
-  — pi started but never emitted markers. Investigate the pi process; it
-  may be stuck on auth or waiting for input.
+- `pi-broker: timed out after 15000ms waiting for subagent-slash-result`
+  — pi started but never dispatched the subagent. Investigate the pi
+  process; it may be stuck on auth or rate-limited.
 - `no job found matching "<id>"` — typo, or that job was never recorded.
   Run `/pi:status` to see what's tracked.
 - `ambiguous job id "<prefix>"` — too short a prefix; use a longer one or
   the internal_id.
+- `step (error)` in the status output — pi-subagents marks runs
+  `complete` even when a step's API call failed (e.g. invalid model).
+  Check the `step-errors:` block for details.
 
 ## Composes with
 
 - **`pi-cc-harness`** — sibling skill in this plugin. Walks the orchestrator
   through the GAN pipeline using `/pi:run` for non-Claude specialists.
-- **`team-tracking-mcp`** — separate plugin. Provides the board (tickets,
-  locks, checkpoints) the specialists report progress to. The broker
-  itself doesn't talk to the board; specialists do, via MCP tools listed
-  in their seed agent file.
 - **`harness-orchestrate`** — the orchestrator skill itself, from
   `~/workspace/skills`. Decides *when* to dispatch and to *which* model.

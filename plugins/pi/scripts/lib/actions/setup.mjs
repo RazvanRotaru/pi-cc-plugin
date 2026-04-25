@@ -6,7 +6,6 @@
 import { parseArgs } from "../args.mjs";
 import {
   checkGitignore,
-  checkMcpRegistration,
   checkPiInstalled,
   checkPiSubagentsInstalled,
   checkSpecialistSeeds,
@@ -25,7 +24,6 @@ export default async function setup(argv, ctx) {
     () => checkPiSubagentsInstalled({ env: ctx.env, cwd: ctx.cwd }),
     () => checkGitignore({ cwd: ctx.cwd }),
     () => checkSpecialistSeeds({ cwd: ctx.cwd }),
-    () => checkMcpRegistration(),
   ];
 
   let hadHardFail = false;
