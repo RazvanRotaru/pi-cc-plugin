@@ -6,3 +6,6 @@ tests/fixtures/runtime/
 .env
 .env.*
 !.env.example
+
+# pi-subagents writes output artifacts (scout's context.md etc.) into cwd
+context.md

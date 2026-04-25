@@ -80,14 +80,105 @@ Status / cancel under pi-subagents:
 - Cancel: send the appropriate event (`SLASH_SUBAGENT_CANCEL_EVENT` per
   `slash-bridge.ts`) or use the slash overlay's keybindings.
 
-### Where pi-subagents writes state — VERIFIED 2026-04-25
+### Where pi-subagents writes state — VERIFIED 2026-04-25 via live run
 
-`~/.pi/agent/sessions/<parent-session-id>/<runId>/` (per
-`getSubagentSessionRoot` in `index.ts`). If no parent session, falls back
-to `mkdtempSync(<tmpdir>/pi-subagent-session-)`. The broker should
-read from there, NOT from the speculative
-`<tmpdir>/pi-subagents-<scope>/async-subagent-runs/` path the fake-pi
-fixture uses today.
+Two locations exist and they serve different purposes:
+
+| Path | Purpose |
+|---|---|
+| `/tmp/pi-subagents-uid-<uid>/async-subagent-runs/<runId>/` | **Async run state** — `status.json`, `events.jsonl`, `output-0.log`, `subagent-log-<runId>.md`. Persists across runs; the broker reads from here. |
+| `~/.pi/agent/sessions/<parent-session-id>/<runId>/run-<n>/` | Per-run scratch dir tied to the parent pi RPC session. Empty in `--no-session` mode. |
+| `~/.pi/agent/sessions/<parent>/subagent-artifacts/<runId>_<agent>_*` | Per-agent input/meta/output artifacts (for the agent manager TUI). |
+
+The `<tmpdir>/pi-subagents-uid-<uid>/async-subagent-runs/<runId>/` path
+is the canonical answer for `--bg` runs and what the broker should
+read. The fake-pi fixture's
+`<tmpdir>/pi-subagents-user/async-subagent-runs/...` is close but the
+suffix is `uid-<uid>` (numeric uid), not `user`. Adjust during the M4
+broker rewrite.
+
+### status.json shape — VERIFIED 2026-04-25 via live run
+
+```json
+{
+  "runId": "6317987c-...",
+  "mode": "single",
+  "state": "running" | "complete" | "failed",
+  "lastActivityAt": 1777105811475,
+  "startedAt": 1777105811474,
+  "lastUpdate": 1777105812467,
+  "pid": 1084636,
+  "cwd": "/abs/path",
+  "currentStep": 0,
+  "steps": [
+    {
+      "agent": "scout",
+      "status": "complete" | "running" | "failed",
+      "skills": [],
+      "model": "openrouter/moonshotai/kimi-k2.6",
+      "attemptedModels": [...],
+      "modelAttempts": [{...}],
+      "startedAt": 1777105811475,
+      "endedAt": 1777105812466,
+      "durationMs": 991,
+      "exitCode": 0,
+      "error": null
+    }
+  ],
+  "artifactsDir": "/tmp/pi-subagents-uid-<uid>/artifacts",
+  "sessionDir": "/tmp/pi-subagent-session-<rand>/<short>/async-<runId>",
+  "outputFile": ".../async-subagent-runs/<runId>/output-0.log"
+}
+```
+
+Note: `state` uses `"complete"` (not `"completed"`) and `"failed"`.
+Steps' `status` follows the same vocabulary. The fake-pi fixture
+emits `"completed"` and needs adjustment.
+
+### Capturing the run id — VERIFIED 2026-04-25 via live run
+
+When `prompt: "/run <agent> \"<task>\" --bg"` is sent over RPC, pi-subagents
+emits a custom message before `agent_start`:
+
+```json
+{
+  "type": "message_start",
+  "message": {
+    "role": "custom",
+    "customType": "subagent-slash-result",
+    "details": {
+      "result": {
+        "details": {
+          "mode": "single",
+          "results": [],
+          "asyncId": "<run-uuid>",
+          "asyncDir": "/tmp/pi-subagents-uid-<uid>/async-subagent-runs/<run-uuid>"
+        }
+      }
+    }
+  }
+}
+```
+
+The broker watches stdout for this `customType: "subagent-slash-result"`
+message and pulls `details.asyncId` + `details.asyncDir`. That's the
+canonical handle.
+
+### Caveat: the LLM agent loop ALSO runs
+
+After the slash dispatches the subagent, pi's main agent loop processes
+the same prompt as a regular user message. It often duplicates work
+(e.g., runs `find` itself even though scout was dispatched). To avoid
+this duplicate work, the broker should close stdin immediately after
+capturing the run id — the detached subagent continues, the wasted LLM
+turn is cut short.
+
+### Model resolution gotcha
+
+Bare model IDs like `moonshotai/kimi-k2.6` resolve via pi's registry
+search and may pick the wrong provider (e.g., `huggingface` if the user
+has no HF key). Always use the fully-qualified `provider/model` form
+in agent overrides, e.g. `openrouter/moonshotai/kimi-k2.6`.
 
 ### Where pi-subagents agents live — VERIFIED 2026-04-25
 

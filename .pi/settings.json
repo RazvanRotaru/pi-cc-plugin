@@ -1,0 +1,15 @@
+{
+  "subagents": {
+    "agentOverrides": {
+      "scout": { "model": "openrouter/moonshotai/kimi-k2.6" },
+      "planner": { "model": "openrouter/moonshotai/kimi-k2.6" },
+      "worker": { "model": "openrouter/moonshotai/kimi-k2.6" },
+      "reviewer": { "model": "openrouter/moonshotai/kimi-k2.6" },
+      "context-builder": { "model": "openrouter/moonshotai/kimi-k2.6" },
+      "researcher": { "model": "openrouter/moonshotai/kimi-k2.6" },
+      "delegate": { "model": "openrouter/moonshotai/kimi-k2.6" },
+      "oracle": { "model": "openrouter/moonshotai/kimi-k2.6" },
+      "oracle-executor": { "model": "openrouter/moonshotai/kimi-k2.6" }
+    }
+  }
+}
