@@ -19,7 +19,7 @@ const AGENT_SPEC_RE = /^([a-zA-Z][a-zA-Z0-9_-]*)\[(.+)\]$/s;
 const INLINE_CFG_RE = /^\[([^\]]+)\]$/;
 const IDENT_RE = /^[a-zA-Z_][a-zA-Z0-9_-]*$/;
 
-const FLAGS_VALUED = new Set(["model", "cwd"]);
+const FLAGS_VALUED = new Set(["model", "cwd", "mcp"]);
 const FLAGS_BOOLEAN = new Set(["bg", "wait", "fork", "worktree", "yes"]);
 
 /**
@@ -143,8 +143,26 @@ function parseRun(positional, flags) {
     fork: !!flags.fork,
     model: flags.model ?? inlineConfig.model,
     cwd: flags.cwd ?? inlineConfig.cwd,
+    mcp: parseMcpList(flags.mcp),
     config: inlineConfig,
   };
+}
+
+/**
+ * --mcp accepts comma-separated entries. Each entry can be either
+ *   "server/tool"   — short form
+ *   "mcp:server/tool" — leading prefix is stripped
+ * Returns a normalized array of "server/tool" strings (no "mcp:" prefix).
+ * Returns null when the flag wasn't passed at all so callers can tell
+ * "user didn't ask for MCP" from "user wants 0 mcp tools" (which we
+ * treat the same — null).
+ */
+export function parseMcpList(raw) {
+  if (!raw) return null;
+  return raw
+    .split(",")
+    .map((s) => s.trim().replace(/^mcp:/, ""))
+    .filter(Boolean);
 }
 
 function parseChain(positional, flags) {
@@ -171,6 +189,7 @@ function parseChain(positional, flags) {
     fork: !!flags.fork,
     model: flags.model,
     cwd: flags.cwd,
+    mcp: parseMcpList(flags.mcp),
   };
 }
 
@@ -214,6 +233,7 @@ function parseParallel(positional, flags) {
     background: flags.background,
     model: flags.model,
     cwd: flags.cwd,
+    mcp: parseMcpList(flags.mcp),
   };
 }
 

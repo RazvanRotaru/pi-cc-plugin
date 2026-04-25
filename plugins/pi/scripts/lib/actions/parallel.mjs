@@ -5,6 +5,7 @@ import { piExec } from "../pi-cli.mjs";
 import { addJob } from "../tracked-jobs.mjs";
 import { stateFilePath } from "../state.mjs";
 import { ensureGitignored } from "../gitignore.mjs";
+import { prepareEphemeralAgents } from "../ephemeral-agents.mjs";
 
 export default async function parallel(argv, ctx) {
   const { payload } = parseArgs("parallel", argv);
@@ -12,14 +13,36 @@ export default async function parallel(argv, ctx) {
   const gi = await ensureGitignored(ctx.cwd);
   if (gi.updated) ctx.stderr.write(`pi-cc-plugin: ${gi.reason}\n`);
 
-  const startedAt = new Date().toISOString();
-  const launch = await piExec({
-    payload,
-    background: payload.background,
-    cwd: payload.cwd ?? ctx.cwd,
-    env: ctx.env,
-    stdout: ctx.stdout,
+  const uniqueAgents = [...new Set(payload.tasks.map((s) => s.agent))];
+  const { nameMap, cleanup } = await prepareEphemeralAgents({
+    cwd: ctx.cwd,
+    agents: uniqueAgents,
+    mcpTools: payload.mcp ?? [],
   });
+  const dispatchPayload =
+    nameMap.size === 0
+      ? payload
+      : {
+          ...payload,
+          tasks: payload.tasks.map((s) => ({
+            ...s,
+            agent: nameMap.get(s.agent) ?? s.agent,
+          })),
+        };
+
+  const startedAt = new Date().toISOString();
+  let launch;
+  try {
+    launch = await piExec({
+      payload: dispatchPayload,
+      background: dispatchPayload.background,
+      cwd: dispatchPayload.cwd ?? ctx.cwd,
+      env: ctx.env,
+      stdout: ctx.stdout,
+    });
+  } finally {
+    await cleanup();
+  }
 
   const job = await addJob(stateFile, {
     id: launch.runId,

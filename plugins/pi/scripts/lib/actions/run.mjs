@@ -5,6 +5,7 @@ import { piExec } from "../pi-cli.mjs";
 import { addJob } from "../tracked-jobs.mjs";
 import { stateFilePath } from "../state.mjs";
 import { ensureGitignored } from "../gitignore.mjs";
+import { prepareEphemeralAgents } from "../ephemeral-agents.mjs";
 
 export default async function run(argv, ctx) {
   const { payload, flags } = parseArgs("run", argv);
@@ -15,15 +16,29 @@ export default async function run(argv, ctx) {
     ctx.stderr.write(`pi-cc-plugin: ${gi.reason}\n`);
   }
 
+  // If --mcp was passed, write an ephemeral agent file that includes the
+  // MCP tools, swap the agent name in the payload, and clean up after.
+  const { nameMap, cleanup } = await prepareEphemeralAgents({
+    cwd: ctx.cwd,
+    agents: [payload.agent],
+    mcpTools: payload.mcp ?? [],
+  });
+  const dispatchPayload = applyAgentRename(payload, nameMap);
+
   const startedAt = new Date().toISOString();
 
-  const launch = await piExec({
-    payload,
-    background: payload.background,
-    cwd: payload.cwd ?? ctx.cwd,
-    env: ctx.env,
-    stdout: ctx.stdout,
-  });
+  let launch;
+  try {
+    launch = await piExec({
+      payload: dispatchPayload,
+      background: dispatchPayload.background,
+      cwd: dispatchPayload.cwd ?? ctx.cwd,
+      env: ctx.env,
+      stdout: ctx.stdout,
+    });
+  } finally {
+    await cleanup();
+  }
 
   const job = await addJob(stateFile, {
     id: launch.runId,
@@ -58,4 +73,18 @@ function exitCodeStatus(code) {
   if (code === 0) return "completed";
   if (code === null) return "running";
   return "failed";
+}
+
+/**
+ * Replace the payload's agent name with the ephemeral version when
+ * `--mcp` was used. The state.json record keeps the ORIGINAL name so
+ * the user sees a stable identifier in /pi:status.
+ */
+function applyAgentRename(payload, nameMap) {
+  if (nameMap.size === 0) return payload;
+  const renamed = { ...payload };
+  if (payload.action === "run" && nameMap.has(payload.agent)) {
+    renamed.agent = nameMap.get(payload.agent);
+  }
+  return renamed;
 }

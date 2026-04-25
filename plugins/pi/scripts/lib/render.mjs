@@ -37,7 +37,7 @@ export function renderJob(job, piStatus) {
       lines.push("  steps:");
       for (const step of piStatus.steps) {
         const tag = step.error ? `${step.status} (error)` : step.status;
-        lines.push(`    - ${step.agent}: ${tag}`);
+        lines.push(`    - ${displayAgentName(step.agent)}: ${tag}`);
       }
     }
     if (piStatus.error) lines.push(`  error: ${truncate(piStatus.error, 300)}`);
@@ -96,6 +96,17 @@ export function guidanceForError(errorText) {
     return "Pi binary not on the subagent's PATH. Re-run /pi:setup; the broker prepends pi's bin dir for child processes.";
   }
   return null;
+}
+
+/**
+ * Strip the broker's `_pi-cc-ephem-<stamp>-<original>` prefix for
+ * display. The ephemeral name is internal — users dispatched against
+ * the original agent name, so that's what /pi:status should show.
+ */
+export function displayAgentName(name) {
+  if (typeof name !== "string") return name;
+  const m = /^_pi-cc-ephem-[\da-z]+-[\da-z]+-(.+)$/.exec(name);
+  return m ? m[1] : name;
 }
 
 function providerEnvVar(provider) {
