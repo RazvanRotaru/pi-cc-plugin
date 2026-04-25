@@ -5,11 +5,21 @@
 
 import { mapPiState } from "./pi-status-reader.mjs";
 
+const TERMINAL_BROKER = new Set(["completed", "cancelled", "failed"]);
+
 /**
  * Render a single job record as a multi-line block.
+ *
+ * Reconciliation rule: state.json's job.status wins when it's terminal
+ * (the broker recorded a final state on user intent — e.g. cancellation
+ * — and pi-subagents' status.json may not have caught up). Otherwise we
+ * trust pi-subagents' fresher state.json.
  */
 export function renderJob(job, piStatus) {
-  const reconciled = piStatus ? mapPiState(piStatus.state) : job.status;
+  const piState = piStatus ? mapPiState(piStatus.state) : null;
+  const reconciled = TERMINAL_BROKER.has(job.status)
+    ? job.status
+    : (piState ?? job.status);
   const lines = [];
   lines.push(`**${job.internal_id}** · ${job.kind} · ${reconciled}`);
   if (job.id) lines.push(`  pi-run-id: \`${job.id}\``);
@@ -20,8 +30,8 @@ export function renderJob(job, piStatus) {
   if (job.started_at) lines.push(`  started: ${job.started_at}`);
   if (job.completed_at) lines.push(`  completed: ${job.completed_at}`);
   if (piStatus) {
-    if (reconciled !== job.status) {
-      lines.push(`  pi-status: ${reconciled} (state.json says: ${job.status})`);
+    if (piState && piState !== reconciled) {
+      lines.push(`  pi-status: ${piState} (broker says: ${reconciled})`);
     }
     if (Array.isArray(piStatus.steps) && piStatus.steps.length) {
       lines.push("  steps:");

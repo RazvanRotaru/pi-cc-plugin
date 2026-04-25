@@ -6,12 +6,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { REPO_ROOT, runBroker } from "./helpers.mjs";
+import { REPO_ROOT, runBroker, withTempCwd } from "./helpers.mjs";
 
 test("/pi:status (no args) prints the alive message", async () => {
-  const { code, stdout } = await runBroker(["status"]);
-  assert.equal(code, 0);
-  assert.match(stdout, /pi-cc-plugin alive/);
+  await withTempCwd(async (cwd) => {
+    const { code, stdout } = await runBroker(["status"], { cwd });
+    assert.equal(code, 0);
+    assert.match(stdout, /pi-cc-plugin alive/);
+  });
 });
 
 test("unknown action exits non-zero with a hint", async () => {
