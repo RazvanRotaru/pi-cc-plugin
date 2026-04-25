@@ -22,7 +22,7 @@ export default async function setup(argv, ctx) {
 
   const checks = [
     () => checkPiInstalled({ env: ctx.env }),
-    () => checkPiSubagentsInstalled({ env: ctx.env }),
+    () => checkPiSubagentsInstalled({ env: ctx.env, cwd: ctx.cwd }),
     () => checkGitignore({ cwd: ctx.cwd }),
     () => checkSpecialistSeeds({ cwd: ctx.cwd }),
     () => checkMcpRegistration(),

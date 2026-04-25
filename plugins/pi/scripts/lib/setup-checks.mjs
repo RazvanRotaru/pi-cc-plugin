@@ -39,32 +39,52 @@ export async function checkPiInstalled({ env }) {
   };
 }
 
-export async function checkPiSubagentsInstalled({ env }) {
-  const desc = resolvePi({ env });
-  const out = await captureProbe(desc.command, [...desc.args, "list-extensions", "--json"], { env });
-  if (out === null) {
-    return {
-      name: "pi-subagents installed",
-      ok: false,
-      message: "pi list-extensions failed (pi missing or older than expected)",
-      fixable: false,
-    };
+/**
+ * Check whether the pi-subagents extension is present.
+ *
+ * Pi has no `list-extensions` flag — extensions are auto-discovered from
+ * `~/.pi/agent/extensions/` (global) or `.pi/extensions/` (project-local)
+ * per `docs/extensions.md` in pi-coding-agent. We just look on disk.
+ *
+ * Test override: env.PI_BROKER_FAKE_EXTENSIONS_DIR points at a dir that
+ * fixture tests can populate to simulate the installed/missing states.
+ */
+export async function checkPiSubagentsInstalled({ env, cwd }) {
+  // Test override: a fixture dir whose contents stand in for ~/.pi/agent/extensions/.
+  if (env.PI_BROKER_FAKE_EXTENSIONS_DIR) {
+    return formatSubagentsResult(
+      await dirContainsSubagents(env.PI_BROKER_FAKE_EXTENSIONS_DIR),
+    );
   }
-  let installed = false;
-  try {
-    const list = JSON.parse(out);
-    installed = Array.isArray(list) && list.some((e) => /pi-subagents/i.test(e.name ?? ""));
-  } catch {
-    installed = /pi-subagents/i.test(out);
+  const home = env.HOME ?? process.env.HOME;
+  const candidates = [];
+  if (home) candidates.push(join(home, ".pi/agent/extensions"));
+  if (cwd) candidates.push(join(cwd, ".pi/extensions"));
+  for (const dir of candidates) {
+    if (await dirContainsSubagents(dir)) return formatSubagentsResult(true);
   }
+  return formatSubagentsResult(false);
+}
+
+function formatSubagentsResult(installed) {
   return {
     name: "pi-subagents installed",
     ok: installed,
     message: installed
       ? "pi-subagents extension found"
-      : "pi-subagents not installed. Install via: pi install npm:pi-subagents",
+      : "pi-subagents not installed. Install: pi install npm:pi-subagents " +
+        "(or drop a copy at ~/.pi/agent/extensions/pi-subagents.ts)",
     fixable: false,
   };
+}
+
+async function dirContainsSubagents(dir) {
+  try {
+    const entries = await readdir(dir);
+    return entries.some((name) => /pi[-_]?subagents/i.test(name));
+  } catch {
+    return false;
+  }
 }
 
 export async function checkSpecialistSeeds({ cwd }) {

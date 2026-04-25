@@ -21,7 +21,16 @@ async function withFakePiTmp(fn) {
 test("happy path: setup → run → status → result → cancel", async () => {
   await withTempCwd(async (cwd) =>
     withFakePiTmp(async (piTmp) => {
-      const env = fakePiEnv({ FAKE_PI_TMPDIR: piTmp });
+      // Provide a fake extensions dir with pi-subagents present so setup passes.
+      const extDir = await mkdtemp(join(tmpdir(), "pi-cc-plugin-ext-"));
+      await (await import("node:fs/promises")).writeFile(
+        join(extDir, "pi-subagents.ts"),
+        "// fixture\n",
+      );
+      const env = fakePiEnv({
+        FAKE_PI_TMPDIR: piTmp,
+        PI_BROKER_FAKE_EXTENSIONS_DIR: extDir,
+      });
 
       // 1. setup
       await mkdir(join(cwd, ".git"));
