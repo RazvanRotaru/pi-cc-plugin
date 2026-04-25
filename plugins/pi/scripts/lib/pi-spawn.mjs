@@ -47,7 +47,24 @@ export function resolvePi({ env = process.env, platform = process.platform } = {
     // Pi requires Node ≥20. The broker itself may run under an older Node
     // (Claude Code's host process inherits whatever's on the system), so
     // we don't blindly use process.execPath — we look for a 20+ node first.
-    const node = findCompatibleNode({ env }) ?? process.execPath;
+    const compatible = findCompatibleNode({ env });
+    if (!compatible) {
+      // findCompatibleNode found nothing ≥20 anywhere — host or nvm or
+      // /usr/local. Fail fast with a clear message instead of letting pi
+      // crash later with a cryptic regex syntax error. Also bypassed via
+      // env.PI_BROKER_NO_NODE_VERSION_CHECK=1 (tests that mock env={}).
+      if (env.PI_BROKER_NO_NODE_VERSION_CHECK !== "1") {
+        const hostMajor = nodeMajor(process.execPath, env) ?? "unknown";
+        throw new Error(
+          `pi-cc-plugin: pi requires Node >= 20 but no compatible Node was found.\n` +
+            `  Host node:    ${process.execPath} (v${hostMajor})\n` +
+            `  Looked in:    nvm versions, /usr/local/bin/node, $PATH\n` +
+            `  Fix:          install Node >= 20 (e.g. nvm install --lts).\n` +
+            `  Or:           set PI_BROKER_PI_BIN to a launcher already running on Node >= 20.`,
+        );
+      }
+    }
+    const node = compatible ?? process.execPath;
     // Pi's child processes need three things on PATH:
     //   1. The Node binary (for any `node`-shebang scripts pi spawns).
     //   2. `npm` matching that Node (pi's package manager spawns npm).

@@ -133,6 +133,71 @@ export async function checkGitignore({ cwd }) {
   };
 }
 
+/**
+ * Best-effort check that pi has SOME provider auth configured. Pi reads
+ * credentials from ~/.pi/agent/auth.json (preferred) OR per-provider env
+ * vars (ANTHROPIC_API_KEY, OPENROUTER_API_KEY, etc.) OR an OAuth login
+ * (Claude Pro/Max, ChatGPT Plus, Gemini CLI). We can't probe the OAuth
+ * paths from outside, but missing auth.json + missing env keys is a
+ * strong signal nothing is configured.
+ */
+export async function checkPiAuth({ env }) {
+  const home = env.HOME ?? process.env.HOME;
+  const authJson = home ? join(home, ".pi/agent/auth.json") : null;
+  const hasAuthFile = authJson ? await fileExists(authJson) : false;
+
+  // Common provider env vars pi recognizes (subset; full list in pi's docs/providers.md).
+  const ENV_KEYS = [
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "OPENROUTER_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "MISTRAL_API_KEY",
+    "GROQ_API_KEY",
+    "XAI_API_KEY",
+    "CEREBRAS_API_KEY",
+    "AI_GATEWAY_API_KEY",
+    "FIREWORKS_API_KEY",
+    "HF_TOKEN",
+  ];
+  const hasEnvKey = ENV_KEYS.some((k) => env[k] && env[k].length > 8);
+
+  if (hasAuthFile || hasEnvKey) {
+    const sources = [];
+    if (hasAuthFile) sources.push("~/.pi/agent/auth.json");
+    if (hasEnvKey) sources.push("env vars");
+    return {
+      name: "pi provider auth",
+      ok: true,
+      message: `auth source: ${sources.join(" + ")}`,
+      fixable: false,
+    };
+  }
+
+  return {
+    name: "pi provider auth",
+    ok: false,
+    message:
+      "no provider configured.  Pick one:\n" +
+      "    A. Subscription:    run `pi`, then /login (Claude Pro/Max, ChatGPT Plus, Gemini CLI, etc.)\n" +
+      "    B. API key file:    run `pi`, then /login (saves to ~/.pi/agent/auth.json with 0600 perms)\n" +
+      "    C. Env var:         export OPENROUTER_API_KEY=sk-or-... (or ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)\n" +
+      "  /pi:run will fail with `No API key found for <provider>` until one of these is set.",
+    fixable: false,
+  };
+}
+
+async function fileExists(p) {
+  try {
+    await access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export const _internals = { SPECIALISTS, SEEDS_DIR };
 
 async function runProbe(command, args, { env, timeoutMs = 5000 }) {

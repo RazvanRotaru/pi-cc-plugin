@@ -50,6 +50,10 @@ export function renderJob(job, piStatus) {
     if (stepErrors.length) {
       lines.push("  step-errors:");
       for (const e of stepErrors) lines.push(`    - ${e}`);
+      // Translate common pi-side errors into broker-level guidance.
+      const allErrors = stepErrors.join(" ");
+      const hint = guidanceForError(allErrors);
+      if (hint) lines.push(`  hint: ${hint}`);
     }
   } else if (job.pi_status_dir) {
     lines.push("  (pi status dir not readable — may have been cleaned up)");
@@ -64,6 +68,51 @@ export function renderJobList(jobs, piStatuses) {
   if (jobs.length === 0) return "No pi jobs tracked yet. Try /pi:run.";
   const blocks = jobs.map((job, i) => renderJob(job, piStatuses[i]));
   return `# pi-cc-plugin: ${jobs.length} job${jobs.length === 1 ? "" : "s"}\n\n${blocks.join("\n\n")}`;
+}
+
+/**
+ * Map common pi/pi-subagents error strings to a broker-level remediation
+ * hint. Returns null if nothing matches.
+ */
+export function guidanceForError(errorText) {
+  if (!errorText) return null;
+  const m = /No API key found for ([\w-]+)/i.exec(errorText);
+  if (m) {
+    const provider = m[1];
+    const envVar = providerEnvVar(provider);
+    return (
+      `pi has no auth for "${provider}". ` +
+      (envVar ? `Set ${envVar}, or run \`pi\` and /login. ` : `Run \`pi\` and /login, or set the matching API_KEY env var. `) +
+      `Re-run /pi:setup to verify.`
+    );
+  }
+  if (/is not a valid model ID|model.*not found/i.test(errorText)) {
+    return "Pi rejected the model id. Check `pi --list-models` (or `pi-prices`) for valid `provider/model` strings.";
+  }
+  if (/worktree isolation requires a clean git working tree/i.test(errorText)) {
+    return "Commit or stash uncommitted changes; pi-subagents requires a clean tree before creating worktrees.";
+  }
+  if (/spawn pi ENOENT/i.test(errorText)) {
+    return "Pi binary not on the subagent's PATH. Re-run /pi:setup; the broker prepends pi's bin dir for child processes.";
+  }
+  return null;
+}
+
+function providerEnvVar(provider) {
+  const map = {
+    anthropic: "ANTHROPIC_API_KEY",
+    openai: "OPENAI_API_KEY",
+    "openai-codex": "(needs ChatGPT Plus/Pro OAuth — `pi` then /login)",
+    openrouter: "OPENROUTER_API_KEY",
+    google: "GEMINI_API_KEY",
+    deepseek: "DEEPSEEK_API_KEY",
+    xai: "XAI_API_KEY",
+    groq: "GROQ_API_KEY",
+    mistral: "MISTRAL_API_KEY",
+    cerebras: "CEREBRAS_API_KEY",
+    huggingface: "HF_TOKEN",
+  };
+  return map[provider.toLowerCase()] ?? null;
 }
 
 function truncate(s, n) {

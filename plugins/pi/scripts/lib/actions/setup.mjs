@@ -6,6 +6,7 @@
 import { parseArgs } from "../args.mjs";
 import {
   checkGitignore,
+  checkPiAuth,
   checkPiInstalled,
   checkPiSubagentsInstalled,
   checkSpecialistSeeds,
@@ -22,6 +23,7 @@ export default async function setup(argv, ctx) {
   const checks = [
     () => checkPiInstalled({ env: ctx.env }),
     () => checkPiSubagentsInstalled({ env: ctx.env, cwd: ctx.cwd }),
+    () => checkPiAuth({ env: ctx.env }),
     () => checkGitignore({ cwd: ctx.cwd }),
     () => checkSpecialistSeeds({ cwd: ctx.cwd }),
   ];

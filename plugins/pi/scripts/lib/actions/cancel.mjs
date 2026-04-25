@@ -16,9 +16,14 @@ import { parseArgs } from "../args.mjs";
 import { findJob, updateJob } from "../tracked-jobs.mjs";
 import { stateFilePath } from "../state.mjs";
 import { mapPiState, readPiStatus } from "../pi-status-reader.mjs";
+import { alive, findRunWorkers, killAll } from "../process-tree.mjs";
 
 const DEFAULT_SIGTERM_GRACE_MS = 5000;
 const TERMINAL_BROKER = new Set(["completed", "cancelled", "failed"]);
+// Race window: pi-subagents' status.json may not exist yet immediately
+// after dispatch. Poll briefly so we don't miss the worker pids.
+const STATUS_POLL_MS = 200;
+const STATUS_POLL_ATTEMPTS = 10; // 2 seconds total
 
 export default async function cancel(argv, ctx) {
   const sigtermGraceMs = Number(
@@ -35,8 +40,14 @@ export default async function cancel(argv, ctx) {
     return 0;
   }
 
-  // Reconcile: pi-subagents may have finished while we weren't watching.
-  const piStatus = await readPiStatus(job.pi_status_dir);
+  // Race window: status.json may not exist yet right after dispatch.
+  // Poll briefly so we can pick up pi-subagents' canonical pid.
+  let piStatus = null;
+  for (let i = 0; i < STATUS_POLL_ATTEMPTS; i++) {
+    piStatus = await readPiStatus(job.pi_status_dir);
+    if (piStatus) break;
+    await sleep(STATUS_POLL_MS);
+  }
   const reconciled = piStatus ? mapPiState(piStatus.state) : null;
   if (reconciled && TERMINAL_BROKER.has(reconciled)) {
     await updateJob(stateFile, job.internal_id, {
@@ -51,24 +62,16 @@ export default async function cancel(argv, ctx) {
     return 0;
   }
 
-  // Identify the pid to kill. Prefer status.json.pid (pi-subagents'
-  // canonical record); fall back to job.pid (broker-recorded at dispatch).
-  const pid = piStatus?.pid ?? job.pid;
-  if (pid && processStillAlive(pid)) {
-    try {
-      process.kill(pid, "SIGTERM");
-    } catch {
-      // race — already dead
-    }
-    await sleep(sigtermGraceMs);
-    if (processStillAlive(pid)) {
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch {
-        // race — already dead
-      }
-    }
-  }
+  // Kill targets: pi-subagents' parent process AND the detached
+  // worker(s) that survive its death (they're orphans by design — see
+  // process-tree.mjs). The recorded pid is the parent; workers are
+  // discovered by scanning `ps` for the runId on the command line.
+  const targets = new Set();
+  const parentPid = piStatus?.pid ?? job.pid;
+  if (parentPid && alive(parentPid)) targets.add(parentPid);
+  for (const pid of findRunWorkers(job.id)) targets.add(pid);
+
+  await killAll([...targets], { graceMs: sigtermGraceMs });
 
   await updateJob(stateFile, job.internal_id, {
     status: "cancelled",
@@ -76,15 +79,6 @@ export default async function cancel(argv, ctx) {
   });
   ctx.stdout.write(`${job.internal_id}: cancelled (pi-run-id ${job.id}).\n`);
   return 0;
-}
-
-function processStillAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function sleep(ms) {
