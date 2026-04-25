@@ -1,4 +1,5 @@
 ---
+name: implementer
 description: Implementer — write the production code that makes the agreed test suite pass.
 model: anthropic/claude-sonnet-4-6
 thinking: medium

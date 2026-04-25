@@ -1,4 +1,5 @@
 ---
+name: ci-triage
 description: CI-triage — bisect a failing CI run, classify (flake / regression / infra), file or fix.
 model: anthropic/claude-sonnet-4-6
 thinking: medium

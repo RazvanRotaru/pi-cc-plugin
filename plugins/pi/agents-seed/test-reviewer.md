@@ -1,4 +1,5 @@
 ---
+name: test-reviewer
 description: Test-reviewer — adversarial review of the test-writer's suite. Find what isn't pinned down.
 model: anthropic/claude-sonnet-4-6
 thinking: high

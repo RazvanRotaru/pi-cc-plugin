@@ -1,4 +1,5 @@
 ---
+name: code-reviewer
 description: Code-reviewer — adversarial review of the implementer's diff against the architect's brief.
 model: anthropic/claude-opus-4-7
 thinking: high

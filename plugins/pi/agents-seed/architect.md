@@ -1,4 +1,5 @@
 ---
+name: architect
 description: Architect — shape contracts, consult on design choices, identify integration points.
 model: anthropic/claude-opus-4-7
 thinking: high
