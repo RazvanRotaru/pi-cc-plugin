@@ -1,0 +1,11 @@
+{
+  "$schema": "https://docs.claude.com/schemas/claude-plugin.json",
+  "name": "pi",
+  "version": "0.1.0",
+  "description": "Delegate to pi-subagents from Claude Code.",
+  "author": {
+    "name": "Razvan Rotaru"
+  },
+  "homepage": "https://github.com/razvanrtr/pi-cc-plugin",
+  "license": "MIT"
+}
