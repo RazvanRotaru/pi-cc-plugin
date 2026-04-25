@@ -14,7 +14,10 @@
 import { spawn } from "node:child_process";
 import { piSpawnEnv, resolvePi } from "./pi-spawn.mjs";
 
-const DEFAULT_DISPATCH_TIMEOUT_MS = 15000;
+// Pi-subagents needs time to (a) load extensions on first invocation,
+// (b) for --worktree runs, do `git worktree add` for each step. 60s
+// covers both comfortably; tune via PI_BROKER_DISPATCH_TIMEOUT_MS.
+const DEFAULT_DISPATCH_TIMEOUT_MS = 60000;
 
 /**
  * Dispatch a subagent run via pi RPC.
@@ -36,8 +39,11 @@ export async function piExec({
   cwd,
   env,
   stdout: _stdout,
-  dispatchTimeoutMs = DEFAULT_DISPATCH_TIMEOUT_MS,
+  dispatchTimeoutMs,
 }) {
+  const timeout =
+    dispatchTimeoutMs ??
+    Number(env.PI_BROKER_DISPATCH_TIMEOUT_MS ?? DEFAULT_DISPATCH_TIMEOUT_MS);
   // Honor a test override that wires us to a fake pi. Real pi is invoked
   // through `pi --mode rpc --no-session`; the fixture handles --mode rpc
   // explicitly so the same code path runs in both environments.
@@ -143,10 +149,10 @@ export async function piExec({
       }
       finish(
         new Error(
-          `timed out after ${dispatchTimeoutMs}ms waiting for subagent-slash-result`,
+          `timed out after ${timeout}ms waiting for subagent-slash-result`,
         ),
       );
-    }, dispatchTimeoutMs);
+    }, timeout);
 
     // Send the slash prompt.
     try {
