@@ -4,11 +4,12 @@ import { parseArgs } from "../args.mjs";
 import { findJob } from "../tracked-jobs.mjs";
 import { stateFilePath } from "../state.mjs";
 import { mapPiState, readPiResult, readPiStatus, readPiLog } from "../pi-status-reader.mjs";
+import { reconcileJob } from "../reconcile.mjs";
 
 export default async function result(argv, ctx) {
   const { payload } = parseArgs("result", argv);
   const stateFile = stateFilePath(ctx.cwd);
-  const job = await findJob(stateFile, payload.id);
+  const job = await reconcileJob(stateFile, await findJob(stateFile, payload.id));
 
   const piStatus = await readPiStatus(job.pi_status_dir);
   const md = await readPiResult(job.pi_status_dir);
