@@ -1,78 +1,71 @@
-// /pi:cancel — abort a running pi job.
+// /pi:cancel — abort a running pi-subagents job.
 //
-// Strategy:
-//   1. Try `pi exec '{"action":"cancel","id":"..."}'` so pi gets a chance to
-//      write a final status.json. (TBD-VERIFY in docs/PI_INVOCATION.md §5.)
-//   2. If that fails or the process is still alive after a short grace,
-//      send SIGTERM to the recorded pid.
-//   3. Escalate to SIGKILL after 5s.
+// Strategy (cleanest first):
+//   1. Reconcile: read status.json. If state ∈ {complete, failed, cancelled},
+//      sync our state and exit — nothing to cancel.
+//   2. SIGTERM the pid recorded in status.json.pid (the running pi-subagent
+//      process). Wait up to PI_BROKER_SIGTERM_GRACE_MS (default 5s).
+//   3. Escalate to SIGKILL if still alive.
 //
-// In every branch, we mark our local state.json `cancelled` so /pi:status
-// reflects the user's intent regardless of what pi wrote.
+// The fall-back to `pi cancel` via RPC is unnecessary for pi-subagents:
+// the async-run process IS the work — killing it terminates everything.
+// pi-subagents' status watcher writes a final status.json marked cancelled
+// when it sees the pid go away, so there's nothing extra to coordinate.
 
 import { parseArgs } from "../args.mjs";
 import { findJob, updateJob } from "../tracked-jobs.mjs";
 import { stateFilePath } from "../state.mjs";
-import { piExec } from "../pi-cli.mjs";
-import { readPiStatus } from "../pi-status-reader.mjs";
+import { mapPiState, readPiStatus } from "../pi-status-reader.mjs";
 
 const DEFAULT_SIGTERM_GRACE_MS = 5000;
-const TERMINAL = new Set(["completed", "cancelled", "failed"]);
+const TERMINAL_BROKER = new Set(["completed", "cancelled", "failed"]);
 
 export default async function cancel(argv, ctx) {
-  const sigtermGraceMs = Number(ctx.env.PI_BROKER_SIGTERM_GRACE_MS ?? DEFAULT_SIGTERM_GRACE_MS);
+  const sigtermGraceMs = Number(
+    ctx.env.PI_BROKER_SIGTERM_GRACE_MS ?? DEFAULT_SIGTERM_GRACE_MS,
+  );
   const { payload } = parseArgs("cancel", argv);
   const stateFile = stateFilePath(ctx.cwd);
   const job = await findJob(stateFile, payload.id);
 
-  if (TERMINAL.has(job.status)) {
-    ctx.stdout.write(`${job.internal_id}: already ${job.status} — nothing to cancel.\n`);
-    return 0;
-  }
-
-  // Reconcile with pi's status.json first — pi may have already finished
-  // even though our state.json still says "running" (we only update state
-  // on explicit broker calls).
-  const piStatus = await readPiStatus(job.pi_status_dir);
-  if (piStatus && TERMINAL.has(piStatus.status)) {
-    await updateJob(stateFile, job.internal_id, {
-      status: piStatus.status,
-      completed_at: piStatus.completed_at ?? new Date().toISOString(),
-    });
+  if (TERMINAL_BROKER.has(job.status)) {
     ctx.stdout.write(
-      `${job.internal_id}: already ${piStatus.status} (pi finished before cancel) — nothing to do.\n`,
+      `${job.internal_id}: already ${job.status} — nothing to cancel.\n`,
     );
     return 0;
   }
 
-  // Try the polite path first.
-  let cleanShutdown = false;
-  try {
-    await piExec({
-      payload: { action: "cancel", id: job.id },
-      background: false,
-      cwd: ctx.cwd,
-      env: ctx.env,
-      stdout: { write: () => {} }, // suppress pi cancel chatter
-      markerTimeoutMs: 1500,
+  // Reconcile: pi-subagents may have finished while we weren't watching.
+  const piStatus = await readPiStatus(job.pi_status_dir);
+  const reconciled = piStatus ? mapPiState(piStatus.state) : null;
+  if (reconciled && TERMINAL_BROKER.has(reconciled)) {
+    await updateJob(stateFile, job.internal_id, {
+      status: reconciled,
+      completed_at: piStatus.endedAt
+        ? new Date(piStatus.endedAt).toISOString()
+        : new Date().toISOString(),
     });
-    cleanShutdown = true;
-  } catch {
-    // pi cancel API not available — fall through to signals.
+    ctx.stdout.write(
+      `${job.internal_id}: already ${reconciled} (pi finished before cancel) — nothing to do.\n`,
+    );
+    return 0;
   }
 
-  if (!cleanShutdown && job.pid && processStillAlive(job.pid)) {
+  // Identify the pid to kill. Prefer status.json.pid (pi-subagents'
+  // canonical record); fall back to job.pid (broker-recorded at dispatch).
+  const pid = piStatus?.pid ?? job.pid;
+  if (pid && processStillAlive(pid)) {
     try {
-      process.kill(job.pid, "SIGTERM");
+      process.kill(pid, "SIGTERM");
     } catch {
-      // already dead
+      // race — already dead
     }
     await sleep(sigtermGraceMs);
-    if (processStillAlive(job.pid)) {
+    if (processStillAlive(pid)) {
       try {
-        process.kill(job.pid, "SIGKILL");
+        process.kill(pid, "SIGKILL");
       } catch {
-        // already dead
+        // race — already dead
       }
     }
   }

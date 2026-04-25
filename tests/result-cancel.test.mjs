@@ -14,7 +14,7 @@ async function withFakePiTmp(fn) {
   }
 }
 
-test("/pi:result reads result.md from pi's status dir", async () => {
+test("/pi:result reads output-N.log from pi's status dir", async () => {
   await withTempCwd(async (cwd) =>
     withFakePiTmp(async (piTmp) => {
       const env = fakePiEnv({ FAKE_PI_TMPDIR: piTmp });
@@ -24,8 +24,7 @@ test("/pi:result reads result.md from pi's status dir", async () => {
       assert.match(stdout, /# job-001/);
       assert.match(stdout, /## Result/);
       assert.match(stdout, /Lorem ipsum simulated output/);
-      assert.match(stdout, /\*\*action:\*\* run/);
-      assert.match(stdout, /\*\*agent:\*\* worker/);
+      assert.match(stdout, /Task: fix the bug/);
     }),
   );
 });
@@ -52,7 +51,7 @@ test("/pi:result on a missing-result run falls back to log/empty message", async
       await runBroker(["run", "worker", "task", "--bg"], { cwd, env });
       const { code, stdout } = await runBroker(["result", "job-001"], { cwd });
       assert.equal(code, 0);
-      assert.match(stdout, /no result\.md/);
+      assert.match(stdout, /no output-N\.log/);
     }),
   );
 });

@@ -97,7 +97,7 @@ test("/pi:parallel rejects bare-form items (must use agent[task])", async () => 
   );
 });
 
-test("/pi:result on a chain job reads result.md", async () => {
+test("/pi:result on a chain job reads output-N.log", async () => {
   await withTempCwd(async (cwd) =>
     withFakePiTmp(async (piTmp) => {
       const env = fakePiEnv({ FAKE_PI_TMPDIR: piTmp });
@@ -107,7 +107,6 @@ test("/pi:result on a chain job reads result.md", async () => {
       );
       const { code, stdout } = await runBroker(["result", "job-001"], { cwd });
       assert.equal(code, 0);
-      assert.match(stdout, /chain/);
       assert.match(stdout, /Lorem ipsum/);
     }),
   );

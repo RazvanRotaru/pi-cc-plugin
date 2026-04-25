@@ -172,23 +172,16 @@ test("failure mode: pi wrote malformed status.json", async () => {
   );
 });
 
-test("failure mode: timeout waiting for markers", async () => {
+test("failure mode: pi exits before subagent-slash-result", async () => {
   await withTempCwd(async (cwd) =>
     withFakePiTmp(async (piTmp) => {
       const env = fakePiEnv({
         FAKE_PI_TMPDIR: piTmp,
-        FAKE_PI_PARTIAL_MARKERS: "run-id-only",
-        // Force the broker to time out fast so the test stays quick.
-        // (The fake pi emits run-id but never status-dir; broker times out.)
+        FAKE_PI_NO_MARKERS: "1",
       });
-      const r = await runBroker(["run", "worker", "task", "--bg"], {
-        cwd,
-        env: { ...env, PI_BROKER_MARKER_TIMEOUT_MS: "500" },
-      });
-      // Either: timeout error (preferred) OR a clean "missing markers"
-      // error if pi exits before timeout. Both are acceptable failure paths.
+      const r = await runBroker(["run", "worker", "task", "--bg"], { cwd, env });
       assert.notEqual(r.code, 0);
-      assert.match(r.stderr, /markers|timed out/);
+      assert.match(r.stderr, /subagent-slash-result|timed out/);
     }),
   );
 });

@@ -126,7 +126,7 @@ test("/pi:run --wait streams pi output and records completion", async () => {
   );
 });
 
-test("missing run-id marker → broker errors", async () => {
+test("missing subagent-slash-result → broker errors", async () => {
   await withTempCwd(async (cwd) =>
     withFakePiTmp(async (piTmp) => {
       const env = fakePiEnv({ FAKE_PI_TMPDIR: piTmp, FAKE_PI_NO_MARKERS: "1" });
@@ -135,7 +135,7 @@ test("missing run-id marker → broker errors", async () => {
         { cwd, env },
       );
       assert.notEqual(code, 0);
-      assert.match(stderr, /markers|run-id/);
+      assert.match(stderr, /subagent-slash-result|timed out/);
     }),
   );
 });

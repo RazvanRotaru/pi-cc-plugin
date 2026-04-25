@@ -3,7 +3,7 @@
 import { parseArgs } from "../args.mjs";
 import { findJob } from "../tracked-jobs.mjs";
 import { stateFilePath } from "../state.mjs";
-import { readPiResult, readPiStatus, readPiLog } from "../pi-status-reader.mjs";
+import { mapPiState, readPiResult, readPiStatus, readPiLog } from "../pi-status-reader.mjs";
 
 export default async function result(argv, ctx) {
   const { payload } = parseArgs("result", argv);
@@ -13,9 +13,15 @@ export default async function result(argv, ctx) {
   const piStatus = await readPiStatus(job.pi_status_dir);
   const md = await readPiResult(job.pi_status_dir);
 
+  const renderedState = piStatus ? mapPiState(piStatus.state) : job.status;
   ctx.stdout.write(`# ${job.internal_id} (pi-run-id ${job.id})\n\n`);
-  ctx.stdout.write(`status: ${piStatus?.status ?? job.status}\n`);
+  ctx.stdout.write(`status: ${renderedState}\n`);
   if (piStatus?.error) ctx.stdout.write(`error: ${piStatus.error}\n`);
+  // Per-step errors live under steps[].error; surface the first one.
+  const stepErr = piStatus?.steps?.find((s) => s.error)?.error;
+  if (stepErr && stepErr !== piStatus?.error) {
+    ctx.stdout.write(`step-error: ${stepErr}\n`);
+  }
   ctx.stdout.write("\n");
 
   if (md) {
@@ -24,16 +30,16 @@ export default async function result(argv, ctx) {
     return 0;
   }
 
-  // No result.md yet. If the run is still going, surface the log instead.
+  // No output yet. If the run is still going, surface the log instead.
   const log = await readPiLog(job.pi_status_dir);
   if (log) {
-    ctx.stdout.write("## Log (no final result yet)\n\n");
+    ctx.stdout.write("## Log (no final output yet)\n\n");
     ctx.stdout.write(log.endsWith("\n") ? log : `${log}\n`);
     return 0;
   }
 
   ctx.stdout.write(
-    "(no result.md or log.md found — pi may not have completed, or its run dir was cleaned up)\n",
+    "(no output-N.log or subagent-log-*.md found — pi may not have completed, or its run dir was cleaned up)\n",
   );
   return 0;
 }

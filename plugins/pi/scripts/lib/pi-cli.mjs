@@ -1,146 +1,130 @@
-// pi-cli.mjs — spawns pi and parses its launch markers.
+// pi-cli.mjs — drive pi over JSON-RPC.
 //
-// Background mode: spawn detached, read run-id + status-dir markers from
-// stdout, unref, return immediately.
+// Spawns `pi --mode rpc --no-session`, sends a `prompt` frame containing
+// pi-subagents' /run, /chain, or /parallel slash command, and watches
+// stdout for the `subagent-slash-result` custom message that carries
+// `asyncId` and `asyncDir`. Once captured, closes stdin so pi's main
+// LLM loop short-circuits — the dispatched subagent is detached and
+// keeps running independently.
 //
-// Foreground (--wait) mode: spawn with stdio piped, tee stdout to ours,
-// still capture markers, await exit.
-//
-// Markers (per docs/PI_INVOCATION.md §4 — fixture-default until verified):
-//   run-id: <uuid>
-//   status-dir: <abs-path>
-//
-// Real pi may emit these on stderr or via different keys. Adjust this file
-// (and the parser below) when the real-pi contract is verified.
+// Foreground (--wait): not yet wired — for v0 the harness path is --bg.
+// Tee-streaming the LLM's output isn't useful when the actual work is
+// happening in a detached subagent process anyway.
 
 import { spawn } from "node:child_process";
 import { piSpawnEnv, resolvePi } from "./pi-spawn.mjs";
 
-const RUN_ID_RE = /^run-id:\s*(\S+)\s*$/;
-const STATUS_DIR_RE = /^status-dir:\s*(\S.*?)\s*$/;
-const DEFAULT_MARKER_TIMEOUT_MS = 5000;
+const DEFAULT_DISPATCH_TIMEOUT_MS = 15000;
 
 /**
- * Spawn pi to execute one `subagent` payload.
+ * Dispatch a subagent run via pi RPC.
  *
  * @param {object} opts
- * @param {object} opts.payload    — the JSON payload (e.g. {action:"run",...})
- * @param {boolean} opts.background — true: detach + return on markers; false: wait for exit
+ * @param {object} opts.payload — parsed args from args.mjs#parseArgs
+ * @param {boolean} opts.background — true = --bg (default in slash form)
  * @param {string} opts.cwd
  * @param {NodeJS.ProcessEnv} opts.env
- * @param {NodeJS.WriteStream} [opts.stdout]
- * @param {number} [opts.markerTimeoutMs]
- * @returns {Promise<{runId: string, statusDir: string, pid: number, exitCode: number|null}>}
+ * @param {NodeJS.WriteStream} [opts.stdout] — for foreground tee (TBD)
+ * @param {number} [opts.dispatchTimeoutMs]
+ * @returns {Promise<{runId, statusDir, pid, exitCode}>}
+ *
+ * Throws if dispatch times out or pi exits before emitting the marker.
  */
 export async function piExec({
   payload,
   background,
   cwd,
   env,
-  stdout,
-  markerTimeoutMs = DEFAULT_MARKER_TIMEOUT_MS,
+  stdout: _stdout,
+  dispatchTimeoutMs = DEFAULT_DISPATCH_TIMEOUT_MS,
 }) {
+  // Honor a test override that wires us to a fake pi. Real pi is invoked
+  // through `pi --mode rpc --no-session`; the fixture handles --mode rpc
+  // explicitly so the same code path runs in both environments.
   const desc = resolvePi({ env });
-  const fullArgs = [...desc.args, "exec", JSON.stringify(payload)];
+  const piArgs = [...desc.args, "--mode", "rpc", "--no-session"];
   const spawnEnv = piSpawnEnv(desc, env);
 
-  const child = spawn(desc.command, fullArgs, {
+  const child = spawn(desc.command, piArgs, {
     cwd,
     env: spawnEnv,
-    detached: background,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["pipe", "pipe", "pipe"],
   });
 
-  const markers = collectMarkers(child, { tee: !background ? stdout : null, timeoutMs: markerTimeoutMs });
+  const slash = buildSlashCommand(payload);
+  const promptFrame = { id: "broker-1", type: "prompt", message: slash };
 
-  if (background) {
-    const result = await markers;
-    child.unref();
-    return { ...result, pid: child.pid, exitCode: null };
-  }
-
-  const [result, exitCode] = await Promise.all([
-    markers,
-    new Promise((res, rej) => {
-      child.on("error", rej);
-      child.on("close", (code) => res(code));
-    }),
-  ]);
-  return { ...result, pid: child.pid, exitCode };
-}
-
-/**
- * Read stdout/stderr line by line until both run-id and status-dir markers
- * are seen, or timeout. Optionally tees stdout lines to `tee`.
- */
-function collectMarkers(child, { tee, timeoutMs }) {
   return new Promise((resolveP, rejectP) => {
     let runId = null;
     let statusDir = null;
-    let timer = null;
     let stdoutBuf = "";
     let stderrBuf = "";
+    let resolved = false;
 
-    const finish = (err) => {
+    const finish = (err, value) => {
+      if (resolved) return;
+      resolved = true;
       clearTimeout(timer);
       child.stdout.off("data", onStdout);
       child.stderr.off("data", onStderr);
       child.off("error", onError);
       child.off("close", onClose);
       if (err) rejectP(err);
-      else resolveP({ runId, statusDir });
+      else resolveP(value);
     };
 
-    const checkLine = (line) => {
-      const idMatch = RUN_ID_RE.exec(line);
-      if (idMatch) {
-        runId = idMatch[1];
-        return true;
-      }
-      const dirMatch = STATUS_DIR_RE.exec(line);
-      if (dirMatch) {
-        statusDir = dirMatch[1];
-        return true;
-      }
-      return false;
-    };
-
-    const consumeBuf = (buf, source) => {
-      let next = buf;
-      while (true) {
-        const nl = next.indexOf("\n");
-        if (nl === -1) return next;
-        const line = next.slice(0, nl);
-        next = next.slice(nl + 1);
-        const matched = checkLine(line);
-        if (!matched && source === "stdout" && tee) {
-          tee.write(`${line}\n`);
-        }
-        if (runId && statusDir) {
-          // Forward the rest of stdoutBuf if we're teeing.
-          if (source === "stdout" && tee && next.length) tee.write(next);
-          stdoutBuf = source === "stdout" ? "" : stdoutBuf;
-          finish();
-          return next;
-        }
+    const handleEvent = (parsed) => {
+      // The interesting marker arrives as a `message_start` (or _end) with
+      // role=custom, customType=subagent-slash-result.
+      if (parsed.type !== "message_start" && parsed.type !== "message_end") return;
+      const msg = parsed.message;
+      if (msg?.role !== "custom") return;
+      if (msg.customType !== "subagent-slash-result") return;
+      const inner = msg.details?.result?.details;
+      if (!inner?.asyncId || !inner?.asyncDir) return;
+      if (runId) return; // Already captured.
+      runId = inner.asyncId;
+      statusDir = inner.asyncDir;
+      // Background dispatch: we have what we need. Close stdin so pi's
+      // LLM loop short-circuits without running the prompt itself.
+      // The subagent is detached and continues regardless.
+      try {
+        child.stdin.end();
+      } catch {
+        // ignore
       }
     };
 
     const onStdout = (chunk) => {
-      stdoutBuf = consumeBuf(stdoutBuf + chunk.toString("utf8"), "stdout");
+      stdoutBuf += chunk.toString("utf8");
+      let nl;
+      while ((nl = stdoutBuf.indexOf("\n")) !== -1) {
+        const line = stdoutBuf.slice(0, nl).replace(/\r$/, "");
+        stdoutBuf = stdoutBuf.slice(nl + 1);
+        if (!line.trim()) continue;
+        let parsed;
+        try {
+          parsed = JSON.parse(line);
+        } catch {
+          // Non-JSON line — ignore.
+          continue;
+        }
+        handleEvent(parsed);
+      }
     };
     const onStderr = (chunk) => {
-      stderrBuf = consumeBuf(stderrBuf + chunk.toString("utf8"), "stderr");
+      stderrBuf += chunk.toString("utf8");
     };
     const onError = (err) => finish(err);
     const onClose = (code) => {
-      // pi exited before emitting markers. If both seen via partial buf,
-      // still resolve; otherwise fail with stderr tail.
-      if (runId && statusDir) return finish();
+      if (runId && statusDir) {
+        finish(null, { runId, statusDir, pid: child.pid, exitCode: code });
+        return;
+      }
       const tail = (stderrBuf || stdoutBuf).slice(-500).trim();
       finish(
         new Error(
-          `pi exited (code ${code}) before emitting run-id+status-dir markers. ` +
+          `pi exited (code ${code}) before emitting subagent-slash-result. ` +
             (tail ? `tail: ${tail}` : ""),
         ),
       );
@@ -151,12 +135,59 @@ function collectMarkers(child, { tee, timeoutMs }) {
     child.once("error", onError);
     child.once("close", onClose);
 
-    timer = setTimeout(() => {
+    const timer = setTimeout(() => {
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // ignore
+      }
       finish(
         new Error(
-          `timed out after ${timeoutMs}ms waiting for pi run-id/status-dir markers`,
+          `timed out after ${dispatchTimeoutMs}ms waiting for subagent-slash-result`,
         ),
       );
-    }, timeoutMs);
+    }, dispatchTimeoutMs);
+
+    // Send the slash prompt.
+    try {
+      child.stdin.write(`${JSON.stringify(promptFrame)}\n`);
+    } catch (err) {
+      finish(err);
+    }
   });
+}
+
+/**
+ * Build a pi-subagents slash command string from a parsed payload.
+ *
+ * Grammar mirrors what pi-subagents accepts:
+ *   /run <agent> "<task>" [--bg] [--fork]
+ *   /chain <agent> "<task>" -> <agent> "<task>" ... [--bg]
+ *   /parallel <agent> "<task>" -> <agent> "<task>" ... [--bg] [--worktree]
+ */
+export function buildSlashCommand(payload) {
+  const flags = [];
+  if (payload.background) flags.push("--bg");
+  if (payload.fork) flags.push("--fork");
+  if (payload.worktree) flags.push("--worktree");
+  const flagSuffix = flags.length ? ` ${flags.join(" ")}` : "";
+
+  switch (payload.action) {
+    case "run":
+      return `/run ${payload.agent} ${quote(payload.task)}${flagSuffix}`;
+    case "chain": {
+      const steps = payload.steps.map((s) => `${s.agent} ${quote(s.task)}`).join(" -> ");
+      return `/chain ${steps}${flagSuffix}`;
+    }
+    case "parallel": {
+      const tasks = payload.tasks.map((s) => `${s.agent} ${quote(s.task)}`).join(" -> ");
+      return `/parallel ${tasks}${flagSuffix}`;
+    }
+    default:
+      throw new Error(`pi-cli: unknown payload action: ${payload.action}`);
+  }
+}
+
+function quote(s) {
+  return `"${String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }

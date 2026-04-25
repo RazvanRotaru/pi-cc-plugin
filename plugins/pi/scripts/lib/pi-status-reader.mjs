@@ -1,17 +1,27 @@
-// pi-status-reader.mjs — read pi's per-run status files.
+// pi-status-reader.mjs — read pi-subagents' per-run status files.
 //
-// Pi writes durable state to <statusDir>/status.json (per
-// docs/PI_INVOCATION.md §3). The broker reads this every time a user runs
-// /pi:status — we don't trust pi's stdout for state.
+// Pi-subagents writes durable state to:
+//   /tmp/pi-subagents-uid-<uid>/async-subagent-runs/<runId>/
+//     status.json
+//     events.jsonl
+//     output-0.log                        # per-step stdout (foreground form)
+//     subagent-log-<runId>.md             # human-readable log
 //
-// All reads are best-effort. Returning null from any of these signals "pi's
-// artifacts aren't readable" and the caller renders that gracefully.
+// The asyncDir is captured at dispatch time and stored in our state.json
+// (job.pi_status_dir). We never guess the path.
+//
+// status.json's `state` and per-step `status` use vocabulary:
+//   "running" | "complete" | "failed"
+// (NOT "completed" — that distinction caught us during dogfood.)
+//
+// All reads are best-effort. Returning null signals "pi's artifacts aren't
+// readable" and the caller renders that gracefully.
 
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 /**
- * Read status.json from a pi run dir. Returns null on missing/malformed.
+ * Read status.json from a pi-subagents async dir.
  */
 export async function readPiStatus(statusDir) {
   if (!statusDir) return null;
@@ -24,25 +34,68 @@ export async function readPiStatus(statusDir) {
 }
 
 /**
- * Read result.md from a pi run dir.
+ * Read the most useful "result" — the per-step stdout file. pi-subagents
+ * writes one `output-<step>.log` per step (zero-indexed). For single-agent
+ * runs there's only `output-0.log`.
  */
 export async function readPiResult(statusDir) {
   if (!statusDir) return null;
+  // Single-step: output-0.log. Multi-step: concatenate all output-<n>.log.
   try {
-    return await readFile(join(statusDir, "result.md"), "utf8");
+    const files = await readdir(statusDir);
+    const outputs = files
+      .filter((f) => /^output-\d+\.log$/.test(f))
+      .sort((a, b) => extractStep(a) - extractStep(b));
+    if (outputs.length === 0) return null;
+    const parts = [];
+    for (const f of outputs) {
+      const body = await readFile(join(statusDir, f), "utf8");
+      parts.push(outputs.length > 1 ? `## step ${extractStep(f)}\n\n${body}` : body);
+    }
+    return parts.join("\n\n");
   } catch {
     return null;
   }
 }
 
 /**
- * Read log.md from a pi run dir.
+ * Read the markdown log (subagent-log-<runId>.md).
  */
 export async function readPiLog(statusDir) {
   if (!statusDir) return null;
   try {
-    return await readFile(join(statusDir, "log.md"), "utf8");
+    const files = await readdir(statusDir);
+    const log = files.find((f) => /^subagent-log-.+\.md$/.test(f));
+    if (!log) return null;
+    return await readFile(join(statusDir, log), "utf8");
   } catch {
     return null;
   }
+}
+
+/**
+ * Map pi-subagents' state vocabulary to ours. Use this when reconciling
+ * pi's status.json into our state.json job records.
+ */
+export function mapPiState(piState) {
+  switch (piState) {
+    case "complete":
+    case "completed":
+      return "completed";
+    case "failed":
+      return "failed";
+    case "cancelled":
+    case "canceled":
+      return "cancelled";
+    case "running":
+    case "pending":
+      return "running";
+    default:
+      return piState ?? "unknown";
+  }
+}
+
+function extractStep(filename) {
+  const m = /^output-(\d+)\.log$/.exec(filename);
+  return m ? Number(m[1]) : 0;
 }

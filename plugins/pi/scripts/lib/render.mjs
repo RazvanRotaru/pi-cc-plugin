@@ -3,12 +3,15 @@
 // Output is consumed by Claude Code (which renders markdown) AND by humans
 // reading raw stdout, so keep it readable in both modes.
 
+import { mapPiState } from "./pi-status-reader.mjs";
+
 /**
  * Render a single job record as a multi-line block.
  */
 export function renderJob(job, piStatus) {
+  const reconciled = piStatus ? mapPiState(piStatus.state) : job.status;
   const lines = [];
-  lines.push(`**${job.internal_id}** · ${job.kind} · ${job.status}`);
+  lines.push(`**${job.internal_id}** · ${job.kind} · ${reconciled}`);
   if (job.id) lines.push(`  pi-run-id: \`${job.id}\``);
   if (Array.isArray(job.agents) && job.agents.length) {
     lines.push(`  agents: ${job.agents.join(" → ")}`);
@@ -17,8 +20,8 @@ export function renderJob(job, piStatus) {
   if (job.started_at) lines.push(`  started: ${job.started_at}`);
   if (job.completed_at) lines.push(`  completed: ${job.completed_at}`);
   if (piStatus) {
-    if (piStatus.status && piStatus.status !== job.status) {
-      lines.push(`  pi-status: ${piStatus.status} (state.json says: ${job.status})`);
+    if (reconciled !== job.status) {
+      lines.push(`  pi-status: ${reconciled} (state.json says: ${job.status})`);
     }
     if (Array.isArray(piStatus.steps) && piStatus.steps.length) {
       lines.push("  steps:");
