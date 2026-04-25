@@ -36,10 +36,21 @@ export function renderJob(job, piStatus) {
     if (Array.isArray(piStatus.steps) && piStatus.steps.length) {
       lines.push("  steps:");
       for (const step of piStatus.steps) {
-        lines.push(`    - ${step.agent}: ${step.status}`);
+        const tag = step.error ? `${step.status} (error)` : step.status;
+        lines.push(`    - ${step.agent}: ${tag}`);
       }
     }
     if (piStatus.error) lines.push(`  error: ${truncate(piStatus.error, 300)}`);
+    // Step-level errors aren't always echoed in piStatus.error — surface
+    // any new ones explicitly so a user doesn't think a step "completed
+    // successfully" when pi-subagents marked it complete-with-error.
+    const stepErrors = (piStatus.steps ?? [])
+      .filter((s) => s.error && s.error !== piStatus.error)
+      .map((s) => `${s.agent}: ${truncate(s.error, 200)}`);
+    if (stepErrors.length) {
+      lines.push("  step-errors:");
+      for (const e of stepErrors) lines.push(`    - ${e}`);
+    }
   } else if (job.pi_status_dir) {
     lines.push("  (pi status dir not readable — may have been cleaned up)");
   }

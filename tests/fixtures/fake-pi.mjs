@@ -198,31 +198,38 @@ function handleFrame(line, scenario) {
 }
 
 function parseSlashCommand(message) {
+  // Mirrors pi-subagents' real parser shape:
+  //   /run <agent>[cfg] task...        (task is rest-of-line, no quotes)
+  //   /chain <agent>[cfg] "task" -> <agent>[cfg] "task"   (or 'task')
+  //   /parallel <agent>[cfg] "task" -> <agent>[cfg] "task"
   const trimmed = message.trim();
   if (!trimmed.startsWith("/")) return null;
   const cmdMatch = /^\/(\w+)/.exec(trimmed);
   if (!cmdMatch) return null;
   const cmd = cmdMatch[1];
   const tail = trimmed.slice(cmdMatch[0].length).trim();
-  // Strip trailing flags so we can extract agents+tasks.
-  const flagSplit = tail.split(/\s+--/);
-  const body = flagSplit[0];
+  // Strip trailing --bg/--fork/--worktree flags.
+  const body = tail.replace(/\s+--(?:bg|fork|worktree)(?=\s|$)/g, "").trim();
   switch (cmd) {
     case "run": {
-      // <agent> "<task>"
-      const m = /^(\S+)\s+"([\s\S]*)"\s*$/.exec(body);
-      if (!m) return null;
-      return { mode: "single", steps: [{ agent: m[1], task: unescape(m[2]) }] };
+      // First whitespace-separated token = agent (with optional [cfg]).
+      const firstSpace = body.indexOf(" ");
+      if (firstSpace === -1) return null;
+      const agentTok = body.slice(0, firstSpace);
+      const task = body.slice(firstSpace + 1).trim();
+      const { agent } = stripAgentConfig(agentTok);
+      return { mode: "single", steps: [{ agent, task }] };
     }
     case "chain":
     case "parallel": {
-      // <agent> "<task>" -> <agent> "<task>" -> ...
       const parts = body.split(" -> ").map((p) => p.trim()).filter(Boolean);
       const steps = [];
       for (const p of parts) {
-        const m = /^(\S+)\s+"([\s\S]*)"\s*$/.exec(p);
+        // <agent>[cfg] "task"  or  <agent>[cfg] 'task'
+        const m = /^(\S+(?:\[[^\]]*\])?)\s+(?:"([^"]*)"|'([^']*)')\s*$/.exec(p);
         if (!m) return null;
-        steps.push({ agent: m[1], task: unescape(m[2]) });
+        const { agent } = stripAgentConfig(m[1]);
+        steps.push({ agent, task: m[2] ?? m[3] });
       }
       if (steps.length === 0) return null;
       return { mode: cmd, steps };
@@ -232,8 +239,9 @@ function parseSlashCommand(message) {
   }
 }
 
-function unescape(s) {
-  return s.replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+function stripAgentConfig(tok) {
+  const i = tok.indexOf("[");
+  return i === -1 ? { agent: tok } : { agent: tok.slice(0, i) };
 }
 
 function stepsFromSlash(slash, status) {

@@ -161,9 +161,13 @@ export async function piExec({
  * Build a pi-subagents slash command string from a parsed payload.
  *
  * Grammar mirrors what pi-subagents accepts:
- *   /run <agent> "<task>" [--bg] [--fork]
- *   /chain <agent> "<task>" -> <agent> "<task>" ... [--bg]
- *   /parallel <agent> "<task>" -> <agent> "<task>" ... [--bg] [--worktree]
+ *   /run <agent>[k=v,...] "<task>" [--bg] [--fork]
+ *   /chain <agent>[k=v,...] "<task>" -> ... [--bg]
+ *   /parallel <agent>[k=v,...] "<task>" -> ... [--bg] [--worktree]
+ *
+ * The inline `[k=v,...]` form is pi-subagents' way to set per-agent
+ * config (model, skill, output, reads, progress). Top-level `--model`
+ * from the broker is forwarded to every agent token in the slash.
  */
 export function buildSlashCommand(payload) {
   const flags = [];
@@ -172,15 +176,26 @@ export function buildSlashCommand(payload) {
   if (payload.worktree) flags.push("--worktree");
   const flagSuffix = flags.length ? ` ${flags.join(" ")}` : "";
 
+  // Inline config to attach to each agent token. Top-level --model
+  // applies to every step. Top-level inline config from /pi:run's
+  // [k=v,...] (parsed into payload.config) overrides per-key.
+  const inlineConfig = collectInlineConfig(payload);
+
   switch (payload.action) {
     case "run":
-      return `/run ${payload.agent} ${quote(payload.task)}${flagSuffix}`;
+      // pi-subagents' /run handler treats everything after the agent token
+      // as the task verbatim (no quote stripping). Don't wrap in quotes.
+      return `/run ${agentToken(payload.agent, inlineConfig)} ${payload.task}${flagSuffix}`;
     case "chain": {
-      const steps = payload.steps.map((s) => `${s.agent} ${quote(s.task)}`).join(" -> ");
+      const steps = payload.steps
+        .map((s) => `${agentToken(s.agent, inlineConfig)} ${quoteTask(s.task)}`)
+        .join(" -> ");
       return `/chain ${steps}${flagSuffix}`;
     }
     case "parallel": {
-      const tasks = payload.tasks.map((s) => `${s.agent} ${quote(s.task)}`).join(" -> ");
+      const tasks = payload.tasks
+        .map((s) => `${agentToken(s.agent, inlineConfig)} ${quoteTask(s.task)}`)
+        .join(" -> ");
       return `/parallel ${tasks}${flagSuffix}`;
     }
     default:
@@ -188,6 +203,41 @@ export function buildSlashCommand(payload) {
   }
 }
 
-function quote(s) {
-  return `"${String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+/**
+ * Merge top-level model + inline config into a single { key: value } map
+ * for emission as `[k=v,...]` on the agent token.
+ */
+function collectInlineConfig(payload) {
+  const cfg = { ...(payload.config ?? {}) };
+  if (payload.model && cfg.model === undefined) cfg.model = payload.model;
+  return cfg;
+}
+
+function agentToken(agent, config) {
+  const entries = Object.entries(config).filter(([, v]) => v !== undefined && v !== null);
+  if (entries.length === 0) return agent;
+  const body = entries.map(([k, v]) => `${k}=${formatScalar(v)}`).join(",");
+  return `${agent}[${body}]`;
+}
+
+function formatScalar(v) {
+  if (typeof v === "boolean" || typeof v === "number") return String(v);
+  return String(v);
+}
+
+/**
+ * Wrap a task in quotes for /chain or /parallel steps. pi-subagents'
+ * parser regex `"([^"]*)"|'([^']*)'` doesn't support escape sequences,
+ * so we pick whichever quote style the task doesn't contain. If both
+ * are present we throw — there's no graceful representation in the
+ * grammar today, so it's better to fail loud than silently truncate.
+ */
+function quoteTask(s) {
+  const str = String(s);
+  if (!str.includes('"')) return `"${str}"`;
+  if (!str.includes("'")) return `'${str}'`;
+  throw new Error(
+    "task contains both single and double quotes — pi-subagents' slash " +
+      "grammar can't represent this. Strip one quote style or use a shorter task.",
+  );
 }
