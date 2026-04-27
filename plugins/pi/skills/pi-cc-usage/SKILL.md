@@ -7,8 +7,9 @@ description: How to use pi-cc-plugin slash commands (/pi:run, /pi:status, /pi:re
 
 `pi-cc-plugin` lets a Claude Code session delegate work to a [pi-subagent](https://github.com/nicobailon/pi-subagents)
 running under any model `pi` supports — Claude, GPT, Gemini, or open-source.
-The pi subagent is a real subprocess; the orchestrator never blocks on it
-unless you explicitly pass `--wait`.
+The pi subagent is a real subprocess; by default the broker waits for
+it to finish and prints its output. Pass `--bg` to detach (or in
+Claude Code, Ctrl+B Ctrl+B a running `/pi:run` to background it).
 
 ## When to reach for which command
 
@@ -27,11 +28,17 @@ removed. Sequential pipelines hand the orchestrator no chance to validate
 intermediate output, and parallel fan-out is already provided by Claude
 Code's native tool-call concurrency.
 
-## Background by default
+## Foreground by default
 
-`/pi:run` backgrounds by default. The broker waits only long enough to
-capture pi's run id, then returns control. Use `--wait` if you want the
-orchestrator's stdout to stream pi's output and block until pi exits.
+`/pi:run` waits for the subagent to finish and prints its output, just
+like a normal tool call. For long jobs you'd rather not block on, pass
+`--bg`: the broker returns the run id immediately and you pick up the
+result later via `/pi:status` and `/pi:result`. In Claude Code you can
+also Ctrl+B Ctrl+B a foreground `/pi:run` to background it on the fly.
+
+`--verbose` streams step transitions while the broker is waiting (one
+line per state change). Useful when you want to see what the subagent
+is doing without inflating the parent context with raw model output.
 
 ## Argument grammar
 
@@ -40,7 +47,8 @@ The grammar mirrors pi-subagents' slash syntax — muscle memory transfers:
 ```
 agent[task]                      # bracketed agent+task
 [key=value,key=value]            # inline config (model, fork, etc.)
---bg | --wait                    # mutually exclusive
+--wait (default) | --bg          # mutually exclusive
+--verbose                        # stream step transitions while waiting
 --model <id>                     # override the agent's default model
 --fork                           # run in a forked session
 --worktree                       # run in an isolated git worktree
@@ -52,16 +60,17 @@ agent[task]                      # bracketed agent+task
 
 ```
 /pi:run worker fix the auth bug in src/login.ts
-/pi:run worker fix the auth bug --model openrouter/google/gemini-3-pro-preview --bg
-/pi:run scout "audit src/auth" --worktree --bg
+/pi:run worker fix the auth bug --model openrouter/google/gemini-3-pro-preview
+/pi:run scout "audit src/auth" --worktree --verbose
+/pi:run worker "rewrite the auth module" --bg     # detached; pick up later
 /pi:status                       # list everything (auto-reconciles with pi)
 /pi:status job-002               # inspect one
 /pi:result job-002               # final output
 /pi:cancel job-002               # SIGTERM, escalates to SIGKILL
 ```
 
-To fan out, issue multiple `/pi:run` calls in one assistant turn — Claude
-Code runs tool calls in parallel and each gets its own job id.
+To fan out, issue multiple `/pi:run --bg` calls in one assistant turn —
+Claude Code runs tool calls in parallel and each gets its own job id.
 
 ## Identifiers
 

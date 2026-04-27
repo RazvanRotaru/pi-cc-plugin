@@ -19,7 +19,7 @@ const INLINE_CFG_RE = /^\[([^\]]+)\]$/;
 const IDENT_RE = /^[a-zA-Z_][a-zA-Z0-9_-]*$/;
 
 const FLAGS_VALUED = new Set(["model", "cwd", "mcp"]);
-const FLAGS_BOOLEAN = new Set(["bg", "wait", "fork", "worktree", "yes"]);
+const FLAGS_BOOLEAN = new Set(["bg", "wait", "fork", "worktree", "yes", "verbose"]);
 // Common guesses that map to canonical flag names so users don't get
 // punished for idiomatic intuition (--foreground/--background are the
 // natural way to say "run synchronously" / "run detached").
@@ -92,11 +92,13 @@ function splitFlags(argv) {
       );
     }
   }
-  // Resolve --bg/--wait into a single mode. Default: bg.
+  // Resolve --bg/--wait into a single mode. Default: foreground (wait).
+  // Pass --bg explicitly to detach. --wait is accepted as a redundant
+  // explicit-foreground flag for clarity / muscle memory.
   if (flags.bg && flags.wait) {
     throw new Error("--bg and --wait are mutually exclusive");
   }
-  flags.background = flags.wait ? false : true;
+  flags.background = !!flags.bg;
   return { positional, flags };
 }
 
@@ -153,6 +155,7 @@ function parseRun(positional, flags) {
     background: flags.background,
     fork: !!flags.fork,
     worktree: !!flags.worktree,
+    verbose: !!flags.verbose,
     model: flags.model ?? inlineConfig.model,
     cwd: flags.cwd ?? inlineConfig.cwd,
     mcp: parseMcpList(flags.mcp),

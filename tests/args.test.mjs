@@ -7,13 +7,26 @@ test("run: bare agent + free-text task", () => {
   assert.equal(payload.action, "run");
   assert.equal(payload.agent, "worker");
   assert.equal(payload.task, "fix the auth bug");
-  assert.equal(payload.background, true);
+  // Default is foreground (wait) now.
+  assert.equal(payload.background, false);
   assert.equal(flags.bg, undefined);
 });
 
-test("run: --wait flips background to false", () => {
-  const { payload } = parseArgs("run", ["worker", "do thing", "--wait"]);
-  assert.equal(payload.background, false);
+test("run: --bg flag flips background to true", () => {
+  const { payload } = parseArgs("run", ["worker", "task", "--bg"]);
+  assert.equal(payload.background, true);
+});
+
+test("run: --wait is accepted as an explicit-foreground alias of the default", () => {
+  const { payload: implicit } = parseArgs("run", ["worker", "task"]);
+  const { payload: explicit } = parseArgs("run", ["worker", "task", "--wait"]);
+  assert.equal(implicit.background, false);
+  assert.equal(explicit.background, false);
+});
+
+test("run: --verbose flag is captured", () => {
+  const { payload } = parseArgs("run", ["worker", "task", "--verbose", "--bg"]);
+  assert.equal(payload.verbose, true);
 });
 
 test("run: agent[task] form", () => {

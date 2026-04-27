@@ -7,9 +7,9 @@
 // closes stdin so pi's main LLM loop short-circuits — the dispatched
 // subagent is detached and keeps running independently.
 //
-// Foreground (--wait): not yet wired — for v0 the harness path is --bg.
-// Tee-streaming the LLM's output isn't useful when the actual work is
-// happening in a detached subagent process anyway.
+// Foreground waiting (the default `/pi:run` mode) lives one layer up,
+// in actions/run.mjs — this module is dispatch-only. After capture,
+// the run.mjs polling loop reads pi-subagents' status.json directly.
 
 import { spawn } from "node:child_process";
 import { piSpawnEnv, resolvePi } from "./pi-spawn.mjs";
@@ -24,10 +24,10 @@ const DEFAULT_DISPATCH_TIMEOUT_MS = 60000;
  *
  * @param {object} opts
  * @param {object} opts.payload — parsed args from args.mjs#parseArgs
- * @param {boolean} opts.background — true = --bg (default in slash form)
+ * @param {boolean} opts.background — true = --bg (broker passes through to pi-subagents)
  * @param {string} opts.cwd
  * @param {NodeJS.ProcessEnv} opts.env
- * @param {NodeJS.WriteStream} [opts.stdout] — for foreground tee (TBD)
+ * @param {NodeJS.WriteStream} [opts.stdout] — currently unused; foreground waiting lives in actions/run.mjs
  * @param {number} [opts.dispatchTimeoutMs]
  * @returns {Promise<{runId, statusDir, pid, exitCode}>}
  *

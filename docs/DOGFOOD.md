@@ -47,13 +47,23 @@ If `pi-subagents installed` fails: `pi list | grep pi-subagents`.
 ## 2. `/pi:run` with a Claude model
 
 ```
-/pi:run worker write a one-paragraph haiku about caches --model anthropic/claude-sonnet-4-6 --bg
+/pi:run worker write a one-paragraph haiku about caches --model anthropic/claude-sonnet-4-6
 ```
 
 Expected:
-- `Started job-001 (pi-run-id <uuid>) — agent=worker, model=anthropic/claude-sonnet-4-6`
-- `/pi:status job-001` shows running, then completed (within ~30s).
-- `/pi:result job-001` returns a haiku.
+- `Running job-001 (pi-run-id <uuid>) — agent=worker, model=anthropic/claude-sonnet-4-6`
+- Broker waits ~30s, polling pi-subagents' status.json.
+- Prints `Finished job-001 — completed` followed by the haiku under an
+  `--- output ---` header.
+
+To dispatch and detach instead, add `--bg`:
+```
+/pi:run worker "rewrite the auth module" --bg
+# Started job-002 — pick up via /pi:status / /pi:result later.
+```
+
+To watch progress live in foreground, add `--verbose` — you'll see
+`· worker: running` then `· worker: complete` as pi advances.
 
 ## 3. `/pi:run` with a non-Claude model
 
@@ -61,9 +71,9 @@ This is the load-bearing test for the design — pi is what makes
 non-Claude specialists possible.
 
 ```
-/pi:run worker same haiku task --model openrouter/google/gemini-3-pro-preview --bg
+/pi:run worker same haiku task --model openrouter/google/gemini-3-pro-preview
 # or:
-/pi:run worker same haiku task --model openrouter/openai/gpt-5.5 --bg
+/pi:run worker same haiku task --model openrouter/openai/gpt-5.5
 ```
 
 Expected: same shape as step 2, but the result text comes from the
@@ -121,7 +131,8 @@ their seed frontmatter — pi will fall back to the workspace's
 ## 5. Mid-flight cancel
 
 ```
-# Start a long-ish run
+# Start a long-ish run, detached so we can issue the cancel from the
+# same Claude Code session.
 /pi:run worker think out loud about caches for 500 words --bg
 
 /pi:status                      # confirm it's running
@@ -129,6 +140,9 @@ their seed frontmatter — pi will fall back to the workspace's
 
 /pi:status job-001              # state shows cancelled
 ```
+
+(In foreground mode you'd Ctrl+C the broker first to stop polling, then
+`/pi:cancel`.)
 
 Expected:
 - Cancel returns within ~5s (SIGTERM grace).
@@ -138,8 +152,7 @@ Expected:
 ## 6. Forced model failure surfaces clearly
 
 ```
-/pi:run worker test --model openrouter/no-such-model --bg
-/pi:status job-001
+/pi:run worker test --model openrouter/no-such-model
 ```
 
 Expected:

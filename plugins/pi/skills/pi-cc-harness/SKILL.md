@@ -31,16 +31,22 @@ acting on, where the relevant files are, what the prior step produced.
 For `/pi:run` dispatches, embed the context in the task brief:
 
 ```
-/pi:run implementer Implement the function from .work/AUTOPILOT-123/architect-brief.md. Tests live at tests/auth.test.mjs. Make them green. --bg
+/pi:run implementer Implement the function from .work/AUTOPILOT-123/architect-brief.md. Tests live at tests/auth.test.mjs. Make them green.
 ```
 
 The specialist sees the entire prompt as their `task` argument. Pi reads
 agent frontmatter from `.pi/agents/implementer.md` for its model,
 thinking level, tools, etc.
 
-## Polling
+By default `/pi:run` waits and prints the specialist's output inline, so
+the orchestrator can read it directly from the tool result. Add `--bg`
+when the specialist is expected to take long enough that you'd rather
+fan out other work in the meantime, then pick up the result via
+`/pi:result <id>`.
 
-You have two state sources and they answer different questions:
+## Polling backgrounded jobs
+
+When you've dispatched with `--bg`, you have two state sources:
 
 | Question | Source |
 |---|---|

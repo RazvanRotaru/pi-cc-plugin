@@ -25,8 +25,13 @@ non-blocking.
 └───────────────────────────────────────────────────────────────┘
 ```
 
-- **Async by default.** Dispatches return in <1s with a job id; the
-  subagent runs detached. No blocking the main session on a long task.
+- **Foreground by default.** `/pi:run` waits for the subagent to finish
+  and prints its output, just like any normal tool call. Add `--bg` for
+  long jobs you want to fire and forget — and pick up later via
+  `/pi:status` and `/pi:result`.
+- **Live progress with `--verbose`.** Stream step transitions to the
+  terminal as they happen. Off by default to keep the orchestrator's
+  context tight.
 - **Heterogeneous models.** Use `--model openrouter/google/gemini-3-pro-preview`,
   `--model anthropic/claude-opus-4-7`, anything pi knows about.
 - **Worktree isolation.** `--worktree` runs the subagent in its own
@@ -91,18 +96,25 @@ default specialist seeds into `.pi/agents/`, and gitignores
 ### 5. First run
 
 ```text
-/pi:run scout "how many .mjs files are in this repo?" --bg
+/pi:run scout "how many .mjs files are in this repo?"
+```
+
+The broker waits for scout to finish and prints its output. For long
+jobs you'd rather background, add `--bg`:
+
+```text
+/pi:run worker "rewrite the auth module" --bg
 ```
 
 Output (within ~1s):
 
 ```text
-Started job-001 (pi-run-id 0f214ec0-…) — agent=scout
+Started job-001 (pi-run-id 0f214ec0-…) — agent=worker
 Use /pi:status job-001 to inspect.
 ```
 
 Then `/pi:status job-001` shows live progress; `/pi:result job-001`
-prints the final output once scout is done.
+prints the final output once worker is done.
 
 ---
 
@@ -120,8 +132,9 @@ prints the final output once scout is done.
 
 | Flag | Where | Effect |
 |---|---|---|
-| `--bg` (default) | run | Detach. Returns the run id immediately. |
-| `--wait` | run | (reserved — currently the broker only does `--bg`) |
+| `--wait` (default) | run | Wait for the subagent to finish; print its output when done. Redundant — same as omitting both flags. |
+| `--bg` | run | Detach. Returns the run id immediately; pick up via `/pi:status` and `/pi:result`. Use this for long runs or when you want to keep the orchestrator session free. In Claude Code you can also Ctrl+B Ctrl+B a running `/pi:run` to background it manually. |
+| `--verbose` | run | While waiting in foreground, stream step-transition lines (`· agent: running` → `· agent: complete`) to stdout. Off by default to keep the parent agent's context small. |
 | `--model <id>` | run | Override the agent's default model (e.g. `openrouter/google/gemini-3-pro-preview`). Always use `provider/model` form to avoid registry resolution surprises. |
 | `--fork` | run | Run the subagent in a forked context (pi-subagents `context: "fork"`). |
 | `--worktree` | run | Run the subagent in an isolated git worktree. Requires a clean working tree. Dispatches via the tool-call path (adds ~3-5s of latency). |
@@ -228,14 +241,14 @@ Edit them freely — the plugin never overwrites once they exist.
 
 ### Cheap recon → expensive deep dive
 
-Two `/pi:run` calls. The orchestrator (Claude) reads scout's result via
-`/pi:result`, decides whether to keep going, then dispatches the deeper
-agent with that context embedded in the brief:
+Two `/pi:run` calls. The orchestrator (Claude) reads scout's result,
+decides whether to keep going, then dispatches the deeper agent with
+that context embedded in the brief:
 
 ```text
-/pi:run scout "map the affected modules" --bg
-# (scout completes, /pi:result job-001 returns its summary)
-/pi:run oracle "Given scout's summary at <path>, critique the plan and surface risks" --bg
+/pi:run scout "map the affected modules"
+# (foreground: scout's output is printed; orchestrator reads it)
+/pi:run oracle "Given scout's summary above, critique the plan and surface risks"
 ```
 
 This replaces the old `/pi:chain` form. Sequential agents almost always
@@ -244,8 +257,9 @@ before deciding what to do next.
 
 ### Fan out with isolation
 
-Multiple `/pi:run` calls from the same assistant turn — Claude Code
-runs tool calls in parallel:
+Multiple `/pi:run --bg` calls from the same assistant turn — Claude
+Code runs tool calls in parallel, and `--bg` lets all three start
+without any one of them blocking the others:
 
 ```text
 /pi:run scout "audit frontend" --worktree --bg
@@ -254,25 +268,25 @@ runs tool calls in parallel:
 ```
 
 Each scout gets its own worktree under `/tmp/pi-worktree-<runId>-<n>`,
-torn down at run end. Requires a clean git working tree.
+torn down at run end. Requires a clean git working tree. Pick the
+results up later via `/pi:result job-001`, `/pi:result job-002`, etc.
 
 ### Lightweight test harness
 
 ```text
-/pi:run test-writer "pin the contract for src/auth.ts" --bg
-# review test-writer's output, then:
-/pi:run implementer "make the suite at tests/auth.test.mjs green" --bg
+/pi:run test-writer "pin the contract for src/auth.ts"
+# orchestrator reads the test-writer brief from stdout, then:
+/pi:run implementer "make the suite at tests/auth.test.mjs green"
 # review the diff, then:
-/pi:run code-reviewer "adversarial review of the implementer diff" --bg
+/pi:run code-reviewer "adversarial review of the implementer diff"
 ```
 
-The orchestrator reads each step's output via `/pi:result` and threads
-the relevant context into the next brief.
+Foreground by default keeps the orchestrator in the loop between steps.
 
 ### Attach MCP tools just for this dispatch
 
 ```text
-/pi:run worker "implement the planned migration using the test-runner MCP" --mcp test-runner/run_suite,test-runner/diff --bg
+/pi:run worker "implement the planned migration using the test-runner MCP" --mcp test-runner/run_suite,test-runner/diff
 ```
 
 ---
@@ -375,6 +389,7 @@ pi-prices --json             # machine-readable
 | `PI_BROKER_PI_BIN` | (auto-resolved) | Override pi launcher (script or binary) |
 | `PI_BROKER_PI_ARGS` | (none) | Comma-separated args prepended after `PI_BROKER_PI_BIN` |
 | `PI_BROKER_DISPATCH_TIMEOUT_MS` | `60000` | How long to wait for pi to ack the slash command |
+| `PI_BROKER_POLL_INTERVAL_MS` | `1500` | Foreground poll interval against pi-subagents' status.json |
 | `PI_BROKER_SIGTERM_GRACE_MS` | `5000` | Cancel grace before SIGKILL |
 | `PI_BROKER_NO_NODE_VERSION_CHECK` | `0` | Skip the Node-≥20 fail-fast (for fixtures) |
 | `PI_BROKER_DEBUG` | `0` | Print stack traces on broker errors |
@@ -433,10 +448,9 @@ works end-to-end before dogfooding model dispatches.
 
 ## Status
 
-**Stable** — broker dispatch (`/pi:run`), status, result, cancel,
-worktree (via tool_call path), `--mcp`, auto-reconcile.
-
-**Reserved** — `--wait` foreground mode (only `--bg` is wired today).
+**Stable** — broker dispatch (`/pi:run`) with foreground polling and
+optional `--verbose` step streaming, `--bg` for detached runs, status,
+result, cancel, worktree (via tool_call path), `--mcp`, auto-reconcile.
 
 **Removed** — `/pi:chain` and `/pi:parallel`. Use multiple `/pi:run`
 calls from the orchestrator instead: parallel falls out naturally
