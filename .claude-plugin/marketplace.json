@@ -9,7 +9,7 @@
     {
       "name": "pi",
       "source": "./plugins/pi",
-      "description": "Slash commands that delegate to pi-subagents: /pi:run, /pi:chain, /pi:parallel, /pi:status, /pi:result, /pi:cancel, /pi:setup."
+      "description": "Slash commands that delegate to pi-subagents: /pi:run, /pi:status, /pi:result, /pi:cancel, /pi:setup."
     }
   ]
 }

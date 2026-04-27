@@ -58,11 +58,12 @@ export default async function run(argv, ctx) {
     model: payload.model ?? null,
     pid: launch.pid ?? null,
     fork: !!payload.fork,
+    worktree: !!payload.worktree,
   });
 
   if (payload.background) {
     ctx.stdout.write(
-      `Started ${job.internal_id} (pi-run-id ${job.id}) — agent=${payload.agent}, model=${payload.model ?? "default"}\n`,
+      `Started ${job.internal_id} (pi-run-id ${job.id}) — agent=${payload.agent}, model=${payload.model ?? "default"}${payload.worktree ? ", worktree" : ""}\n`,
     );
     ctx.stdout.write(`Use /pi:status ${job.internal_id} to inspect.\n`);
   } else {

@@ -1,5 +1,5 @@
 // process-tree.mjs — find and kill the worker subagents pi-subagents
-// detaches when /run, /chain, or /parallel runs in --bg mode.
+// detaches when /pi:run dispatches in --bg mode.
 //
 // The problem: when /pi:cancel SIGTERMs the parent pid recorded in
 // pi-subagents' status.json, that parent is the orchestrator/controller

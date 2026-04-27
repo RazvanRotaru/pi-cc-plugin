@@ -50,7 +50,7 @@ test("plugin.json has version + description", async () => {
 });
 
 test("every command file references the broker", async () => {
-  const cmds = ["status", "run", "chain", "parallel", "result", "cancel", "setup"];
+  const cmds = ["status", "run", "result", "cancel", "setup"];
   for (const cmd of cmds) {
     const body = await readFile(
       resolve(REPO_ROOT, `plugins/pi/commands/${cmd}.md`),

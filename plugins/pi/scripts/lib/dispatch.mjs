@@ -6,8 +6,6 @@
 
 const ACTIONS = {
   run: () => import("./actions/run.mjs"),
-  chain: () => import("./actions/chain.mjs"),
-  parallel: () => import("./actions/parallel.mjs"),
   status: () => import("./actions/status.mjs"),
   result: () => import("./actions/result.mjs"),
   cancel: () => import("./actions/cancel.mjs"),

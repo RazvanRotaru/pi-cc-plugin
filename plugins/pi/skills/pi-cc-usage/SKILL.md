@@ -1,6 +1,6 @@
 ---
 name: pi-cc-usage
-description: How to use pi-cc-plugin slash commands (/pi:run, /pi:chain, /pi:parallel, /pi:status, /pi:result, /pi:cancel, /pi:setup) to delegate tasks from Claude Code to pi-subagents.
+description: How to use pi-cc-plugin slash commands (/pi:run, /pi:status, /pi:result, /pi:cancel, /pi:setup) to delegate tasks from Claude Code to pi-subagents.
 ---
 
 # Using `pi-cc-plugin`
@@ -14,33 +14,37 @@ unless you explicitly pass `--wait`.
 
 | Goal | Command |
 |---|---|
-| Hand one task to one specialist, fire-and-forget | `/pi:run` |
-| Pipe N specialists in sequence (output of N → input of N+1) | `/pi:chain` |
-| Run N independent tasks at once, optionally with worktree isolation | `/pi:parallel` |
+| Hand one task to one specialist | `/pi:run` |
+| Run N tasks in parallel | call `/pi:run` N times in one assistant turn — Claude Code runs tool calls concurrently |
+| Pipe specialist N → N+1 | call `/pi:run`, read its output via `/pi:result`, embed that context into the next `/pi:run` brief |
 | Check what's running | `/pi:status` |
 | Read the final markdown output of a finished run | `/pi:result <id>` |
 | Stop a runaway run | `/pi:cancel <id>` |
 | One-time wiring: verify pi + pi-subagents, scaffold `.pi/agents/` | `/pi:setup` |
 
+The plugin used to ship `/pi:chain` and `/pi:parallel`; both have been
+removed. Sequential pipelines hand the orchestrator no chance to validate
+intermediate output, and parallel fan-out is already provided by Claude
+Code's native tool-call concurrency.
+
 ## Background by default
 
-Every dispatch command (`/pi:run`, `/pi:chain`, `/pi:parallel`) backgrounds
-by default. The broker waits only long enough to capture pi's run id, then
-returns control. Use `--wait` if you want the orchestrator's stdout to
-stream pi's output and block until pi exits.
+`/pi:run` backgrounds by default. The broker waits only long enough to
+capture pi's run id, then returns control. Use `--wait` if you want the
+orchestrator's stdout to stream pi's output and block until pi exits.
 
 ## Argument grammar
 
 The grammar mirrors pi-subagents' slash syntax — muscle memory transfers:
 
 ```
-agent[task]                      # one bracketed step (chain/parallel only)
-->                               # chain or parallel separator
+agent[task]                      # bracketed agent+task
 [key=value,key=value]            # inline config (model, fork, etc.)
 --bg | --wait                    # mutually exclusive
 --model <id>                     # override the agent's default model
 --fork                           # run in a forked session
---worktree                       # parallel only — isolate filesystems
+--worktree                       # run in an isolated git worktree
+--mcp <server/tool,…>            # attach MCP tools for this dispatch
 --cwd <path>                     # run pi in a different working dir
 ```
 
@@ -49,13 +53,15 @@ agent[task]                      # one bracketed step (chain/parallel only)
 ```
 /pi:run worker fix the auth bug in src/login.ts
 /pi:run worker fix the auth bug --model openrouter/google/gemini-3-pro-preview --bg
-/pi:chain scout["map the affected files"] -> planner["draft a refactor plan"] -> worker["execute the plan"]
-/pi:parallel test-writer["module A"] test-writer["module B"] --worktree
+/pi:run scout "audit src/auth" --worktree --bg
 /pi:status                       # list everything (auto-reconciles with pi)
 /pi:status job-002               # inspect one
-/pi:result job-002               # final output (concatenated for multi-step runs)
+/pi:result job-002               # final output
 /pi:cancel job-002               # SIGTERM, escalates to SIGKILL
 ```
+
+To fan out, issue multiple `/pi:run` calls in one assistant turn — Claude
+Code runs tool calls in parallel and each gets its own job id.
 
 ## Identifiers
 

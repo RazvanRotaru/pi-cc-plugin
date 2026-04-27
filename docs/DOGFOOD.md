@@ -72,23 +72,36 @@ exactly what we passed.
 
 Verify: `cat /tmp/pi-subagents-uid-$(id -u)/async-subagent-runs/<uuid>/status.json | jq '.steps[].model'`.
 
-## 4. `/pi:chain` and `/pi:parallel`
+## 4. Fan out via multiple `/pi:run` calls
+
+In one assistant turn (Claude Code runs tool calls concurrently):
 
 ```
-/pi:chain scout["map the test files"] -> reviewer["summarize what scout produced"] --bg
-/pi:parallel scout["count .mjs files"] scout["count .md files"] --bg
-/pi:parallel scout["count js files"] scout["count md files"] --worktree --bg
+/pi:run scout "count .mjs files" --bg
+/pi:run scout "count .md files"  --bg
+```
+
+Expected: two distinct internal_ids, both `running`, both `completed`
+within ~30s.
+
+For sequential pipelines, dispatch the next step from the orchestrator
+after reading the previous step's `/pi:result` — this keeps the
+orchestrator (Claude) in the loop to validate intermediate output.
+
+## 4a. `--worktree` isolation on `/pi:run`
+
+```
+/pi:run scout "count js files" --worktree --bg
 ```
 
 Expected:
-- Each command returns immediately with a single internal_id.
-- `/pi:status <id>` shows per-step status.
-- `/pi:result <id>` concatenates per-step `output-N.log` under headers.
-- `--worktree` requires a clean git working tree (pi-subagents' check)
-  and runs each step in an isolated `/tmp/pi-worktree-<runId>-<n>` that
-  gets cleaned up after the run. The plugin dispatches via a tool-call
-  prompt (LLM-forwarded JSON) since pi-subagents' slash grammar doesn't
-  expose `--worktree` natively. Adds ~3-5s of dispatch latency vs slash.
+- Returns immediately with an internal_id.
+- Pi-subagents creates `/tmp/pi-worktree-<runId>-<n>` and runs the
+  agent there; teardown happens at run end.
+- Requires a clean git working tree.
+- Dispatches via a tool-call prompt (LLM-forwarded JSON) since
+  pi-subagents' slash grammar doesn't expose `--worktree` natively.
+  Adds ~3-5s of dispatch latency vs slash.
 
 ## 4b. GAN flow with the seed agents
 
