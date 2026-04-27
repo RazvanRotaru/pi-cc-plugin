@@ -67,50 +67,20 @@ test("happy path: setup → run → status → result → cancel", async () => {
   );
 });
 
-test("chain happy path: 3 steps complete", async () => {
+test("/pi:run --worktree dispatches via tool form (no slash)", async () => {
   await withTempCwd(async (cwd) =>
     withFakePiTmp(async (piTmp) => {
       const env = fakePiEnv({ FAKE_PI_TMPDIR: piTmp });
-      const r = await runBroker(
-        [
-          "chain",
-          "scout[a]",
-          "->",
-          "planner[b]",
-          "->",
-          "worker[c]",
-          "--bg",
-        ],
+      const { code, stdout } = await runBroker(
+        ["run", "test-writer", "module A", "--worktree", "--bg"],
         { cwd, env },
       );
-      assert.equal(r.code, 0);
-      const status = await runBroker(["status", "job-001"], { cwd });
-      assert.match(status.stdout, /chain/);
-      assert.match(status.stdout, /scout/);
-      assert.match(status.stdout, /worker/);
-    }),
-  );
-});
-
-test("parallel happy path: 3 tasks (worktree not supported by slash)", async () => {
-  await withTempCwd(async (cwd) =>
-    withFakePiTmp(async (piTmp) => {
-      const env = fakePiEnv({ FAKE_PI_TMPDIR: piTmp });
-      const r = await runBroker(
-        [
-          "parallel",
-          "test-writer[A]",
-          "test-writer[B]",
-          "test-writer[C]",
-          "--bg",
-        ],
-        { cwd, env },
-      );
-      assert.equal(r.code, 0);
+      assert.equal(code, 0);
+      assert.match(stdout, /worktree/);
       const state = JSON.parse(
         await readFile(join(cwd, ".pi-cc-plugin/state.json"), "utf8"),
       );
-      assert.equal(state.jobs[0].agents.length, 3);
+      assert.equal(state.jobs[0].worktree, true);
     }),
   );
 });

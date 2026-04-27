@@ -47,13 +47,23 @@ If `pi-subagents installed` fails: `pi list | grep pi-subagents`.
 ## 2. `/pi:run` with a Claude model
 
 ```
-/pi:run worker write a one-paragraph haiku about caches --model anthropic/claude-sonnet-4-6 --bg
+/pi:run worker write a one-paragraph haiku about caches --model anthropic/claude-sonnet-4-6
 ```
 
 Expected:
-- `Started job-001 (pi-run-id <uuid>) — agent=worker, model=anthropic/claude-sonnet-4-6`
-- `/pi:status job-001` shows running, then completed (within ~30s).
-- `/pi:result job-001` returns a haiku.
+- `Running job-001 (pi-run-id <uuid>) — agent=worker, model=anthropic/claude-sonnet-4-6`
+- Broker waits ~30s, polling pi-subagents' status.json.
+- Prints `Finished job-001 — completed` followed by the haiku under an
+  `--- output ---` header.
+
+To dispatch and detach instead, add `--bg`:
+```
+/pi:run worker "rewrite the auth module" --bg
+# Started job-002 — pick up via /pi:status / /pi:result later.
+```
+
+To watch progress live in foreground, add `--verbose` — you'll see
+`· worker: running` then `· worker: complete` as pi advances.
 
 ## 3. `/pi:run` with a non-Claude model
 
@@ -61,9 +71,9 @@ This is the load-bearing test for the design — pi is what makes
 non-Claude specialists possible.
 
 ```
-/pi:run worker same haiku task --model openrouter/google/gemini-3-pro-preview --bg
+/pi:run worker same haiku task --model openrouter/google/gemini-3-pro-preview
 # or:
-/pi:run worker same haiku task --model openrouter/openai/gpt-5.5 --bg
+/pi:run worker same haiku task --model openrouter/openai/gpt-5.5
 ```
 
 Expected: same shape as step 2, but the result text comes from the
@@ -72,23 +82,36 @@ exactly what we passed.
 
 Verify: `cat /tmp/pi-subagents-uid-$(id -u)/async-subagent-runs/<uuid>/status.json | jq '.steps[].model'`.
 
-## 4. `/pi:chain` and `/pi:parallel`
+## 4. Fan out via multiple `/pi:run` calls
+
+In one assistant turn (Claude Code runs tool calls concurrently):
 
 ```
-/pi:chain scout["map the test files"] -> reviewer["summarize what scout produced"] --bg
-/pi:parallel scout["count .mjs files"] scout["count .md files"] --bg
-/pi:parallel scout["count js files"] scout["count md files"] --worktree --bg
+/pi:run scout "count .mjs files" --bg
+/pi:run scout "count .md files"  --bg
+```
+
+Expected: two distinct internal_ids, both `running`, both `completed`
+within ~30s.
+
+For sequential pipelines, dispatch the next step from the orchestrator
+after reading the previous step's `/pi:result` — this keeps the
+orchestrator (Claude) in the loop to validate intermediate output.
+
+## 4a. `--worktree` isolation on `/pi:run`
+
+```
+/pi:run scout "count js files" --worktree --bg
 ```
 
 Expected:
-- Each command returns immediately with a single internal_id.
-- `/pi:status <id>` shows per-step status.
-- `/pi:result <id>` concatenates per-step `output-N.log` under headers.
-- `--worktree` requires a clean git working tree (pi-subagents' check)
-  and runs each step in an isolated `/tmp/pi-worktree-<runId>-<n>` that
-  gets cleaned up after the run. The plugin dispatches via a tool-call
-  prompt (LLM-forwarded JSON) since pi-subagents' slash grammar doesn't
-  expose `--worktree` natively. Adds ~3-5s of dispatch latency vs slash.
+- Returns immediately with an internal_id.
+- Pi-subagents creates `/tmp/pi-worktree-<runId>-<n>` and runs the
+  agent there; teardown happens at run end.
+- Requires a clean git working tree.
+- Dispatches via a tool-call prompt (LLM-forwarded JSON) since
+  pi-subagents' slash grammar doesn't expose `--worktree` natively.
+  Adds ~3-5s of dispatch latency vs slash.
 
 ## 4b. GAN flow with the seed agents
 
@@ -108,7 +131,8 @@ their seed frontmatter — pi will fall back to the workspace's
 ## 5. Mid-flight cancel
 
 ```
-# Start a long-ish run
+# Start a long-ish run, detached so we can issue the cancel from the
+# same Claude Code session.
 /pi:run worker think out loud about caches for 500 words --bg
 
 /pi:status                      # confirm it's running
@@ -116,6 +140,9 @@ their seed frontmatter — pi will fall back to the workspace's
 
 /pi:status job-001              # state shows cancelled
 ```
+
+(In foreground mode you'd Ctrl+C the broker first to stop polling, then
+`/pi:cancel`.)
 
 Expected:
 - Cancel returns within ~5s (SIGTERM grace).
@@ -125,8 +152,7 @@ Expected:
 ## 6. Forced model failure surfaces clearly
 
 ```
-/pi:run worker test --model openrouter/no-such-model --bg
-/pi:status job-001
+/pi:run worker test --model openrouter/no-such-model
 ```
 
 Expected:

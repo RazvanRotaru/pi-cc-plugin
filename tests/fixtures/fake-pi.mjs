@@ -27,11 +27,21 @@
 //   FAKE_PI_INSTALLED=1|0                     — toggle pi-subagents in `pi list` output
 //   FAKE_PI_HANG_ON_TERM=<ms>                 — ignore SIGTERM for N ms (M5 cancel test)
 
+import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 
 const argv = process.argv.slice(2);
+
+// Detached helper invocation: write the deferred finalize after a delay.
+// Used by the FAKE_PI_DELAY_MS path so the parent fake-pi can exit fast
+// (mimicking real pi's "orchestrator exits, subagent continues" model).
+if (argv[0] === "__finalize") {
+  await runFinalizeMode(argv.slice(1));
+  process.exit(0);
+}
 
 if (argv.includes("--version")) {
   process.stdout.write("fake-pi 0.1.0\n");
@@ -185,32 +195,6 @@ function handleFrame(line, scenario) {
 
   const delay = Number(process.env.FAKE_PI_DELAY_MS ?? 0);
 
-  const finalize = () => {
-    if (scenario === "stale-dir" || scenario === "bad-json") return;
-    writeFileSync(
-      join(asyncDir, "output-0.log"),
-      buildOutput(slash),
-      "utf8",
-    );
-    writeFileSync(
-      join(asyncDir, `subagent-log-${runId}.md`),
-      `# fake-pi log for ${runId}\n\n${buildOutput(slash)}\n`,
-      "utf8",
-    );
-    writeStatus(asyncDir, {
-      runId,
-      mode: slash.mode,
-      state: scenario === "fail" ? "failed" : "complete",
-      startedAt: Date.now(),
-      endedAt: Date.now(),
-      pid: process.pid,
-      cwd: process.cwd(),
-      currentStep: 0,
-      steps: stepsFromSlash(slash, scenario === "fail" ? "failed" : "complete"),
-      error: scenario === "fail" ? "fake failure" : null,
-    });
-  };
-
   if (scenario === "timeout") {
     // Stay in "running" forever — broker should give up via its own timer
     // or the test should cancel.
@@ -218,10 +202,64 @@ function handleFrame(line, scenario) {
   }
 
   if (delay > 0) {
-    setTimeout(finalize, delay);
+    // Mimic real pi: the orchestrator process exits quickly while the
+    // subagent runs detached. Spawn an unref'd child that performs the
+    // finalize after `delay` ms so this process can return to its
+    // stdin-end handler immediately.
+    scheduleDetachedFinalize({
+      asyncDir,
+      runId,
+      slash,
+      scenario,
+      delayMs: delay,
+    });
   } else {
-    finalize();
+    runFinalize({ asyncDir, runId, slash, scenario });
   }
+}
+
+function runFinalize({ asyncDir, runId, slash, scenario }) {
+  if (scenario === "stale-dir" || scenario === "bad-json") return;
+  writeFileSync(
+    join(asyncDir, "output-0.log"),
+    buildOutput(slash),
+    "utf8",
+  );
+  writeFileSync(
+    join(asyncDir, `subagent-log-${runId}.md`),
+    `# fake-pi log for ${runId}\n\n${buildOutput(slash)}\n`,
+    "utf8",
+  );
+  writeStatus(asyncDir, {
+    runId,
+    mode: slash.mode,
+    state: scenario === "fail" ? "failed" : "complete",
+    startedAt: Date.now(),
+    endedAt: Date.now(),
+    pid: process.pid,
+    cwd: process.cwd(),
+    currentStep: 0,
+    steps: stepsFromSlash(slash, scenario === "fail" ? "failed" : "complete"),
+    error: scenario === "fail" ? "fake failure" : null,
+  });
+}
+
+async function runFinalizeMode(args) {
+  const [asyncDir, runId, scenario, delayStr, slashJson] = args;
+  const delayMs = Number(delayStr);
+  const slash = JSON.parse(slashJson);
+  await new Promise((r) => setTimeout(r, delayMs));
+  runFinalize({ asyncDir, runId, slash, scenario });
+}
+
+function scheduleDetachedFinalize({ asyncDir, runId, slash, scenario, delayMs }) {
+  const fakePiPath = fileURLToPath(import.meta.url);
+  const child = spawn(
+    process.execPath,
+    [fakePiPath, "__finalize", asyncDir, runId, scenario, String(delayMs), JSON.stringify(slash)],
+    { detached: true, stdio: "ignore" },
+  );
+  child.unref();
 }
 
 function parseSlashCommand(message) {

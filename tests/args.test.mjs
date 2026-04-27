@@ -7,19 +7,32 @@ test("run: bare agent + free-text task", () => {
   assert.equal(payload.action, "run");
   assert.equal(payload.agent, "worker");
   assert.equal(payload.task, "fix the auth bug");
-  assert.equal(payload.background, true);
+  // Default is foreground (wait) now.
+  assert.equal(payload.background, false);
   assert.equal(flags.bg, undefined);
+});
+
+test("run: --bg flag flips background to true", () => {
+  const { payload } = parseArgs("run", ["worker", "task", "--bg"]);
+  assert.equal(payload.background, true);
+});
+
+test("run: --wait is accepted as an explicit-foreground alias of the default", () => {
+  const { payload: implicit } = parseArgs("run", ["worker", "task"]);
+  const { payload: explicit } = parseArgs("run", ["worker", "task", "--wait"]);
+  assert.equal(implicit.background, false);
+  assert.equal(explicit.background, false);
+});
+
+test("run: --verbose flag is captured", () => {
+  const { payload } = parseArgs("run", ["worker", "task", "--verbose", "--bg"]);
+  assert.equal(payload.verbose, true);
 });
 
 test("run: agent[task] form", () => {
   const { payload } = parseArgs("run", ["worker[fix the auth bug]"]);
   assert.equal(payload.agent, "worker");
   assert.equal(payload.task, "fix the auth bug");
-});
-
-test("run: --wait flips background to false", () => {
-  const { payload } = parseArgs("run", ["worker", "do thing", "--wait"]);
-  assert.equal(payload.background, false);
 });
 
 test("run: --bg + --wait conflict", () => {
@@ -89,68 +102,14 @@ test("run: --model without value", () => {
   assert.throws(() => parseArgs("run", ["worker", "task", "--model"]), /requires a value/);
 });
 
-test("chain: 3 steps with quoted tasks", () => {
-  const { payload } = parseArgs("chain", [
-    "scout[find affected modules]",
-    "->",
-    "planner[draft a plan]",
-    "->",
-    "worker[execute the plan]",
-  ]);
-  assert.equal(payload.action, "chain");
-  assert.equal(payload.steps.length, 3);
-  assert.deepEqual(payload.steps[0], { agent: "scout", task: "find affected modules" });
-  assert.deepEqual(payload.steps[2], { agent: "worker", task: "execute the plan" });
-});
-
-test("chain: bare-form steps", () => {
-  const { payload } = parseArgs("chain", [
-    "scout",
-    "look",
-    "around",
-    "->",
-    "worker",
-    "do",
-    "the",
-    "thing",
-  ]);
-  assert.equal(payload.steps.length, 2);
-  assert.deepEqual(payload.steps[0], { agent: "scout", task: "look around" });
-  assert.deepEqual(payload.steps[1], { agent: "worker", task: "do the thing" });
-});
-
-test("chain: empty steps is an error", () => {
-  assert.throws(() => parseArgs("chain", []), /at least one step/);
-});
-
-test("chain: trailing flags don't pollute steps", () => {
-  const { payload, flags } = parseArgs("chain", [
-    "scout[a]",
-    "->",
-    "worker[b]",
-    "--bg",
-    "--model",
-    "openai/gpt-5",
-  ]);
-  assert.equal(payload.steps.length, 2);
-  assert.equal(flags.model, "openai/gpt-5");
-  assert.equal(flags.bg, true);
-});
-
-test("parallel: requires bracketed form", () => {
-  assert.throws(() => parseArgs("parallel", ["worker", "task1"]), /agent\["task"\] form/);
-});
-
-test("parallel: multiple bracketed items", () => {
-  const { payload } = parseArgs("parallel", [
-    "test-writer[module A]",
-    "test-writer[module B]",
-    "--worktree",
-  ]);
-  assert.equal(payload.action, "parallel");
-  assert.equal(payload.tasks.length, 2);
+test("run: --worktree flag is captured on the payload", () => {
+  const { payload } = parseArgs("run", ["worker", "task", "--worktree"]);
   assert.equal(payload.worktree, true);
-  assert.equal(payload.tasks[1].task, "module B");
+});
+
+test("run: --worktree absent defaults to false", () => {
+  const { payload } = parseArgs("run", ["worker", "task"]);
+  assert.equal(payload.worktree, false);
 });
 
 test("status: no id → list mode", () => {

@@ -5,7 +5,7 @@
 // because the broker is just sitting in a handshake against nothing.
 //
 // The check is filesystem-only: no subprocesses. ~1ms per call. Result
-// cached in-process so /pi:run/chain/parallel each pay it once at most.
+// cached in-process so each /pi:run dispatch pays it once at most.
 //
 // Cache lifetime is per-broker-process, so each slash command run does
 // pay the first call once. With dispatch-cost dominating overall

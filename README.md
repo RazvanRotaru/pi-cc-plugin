@@ -25,12 +25,17 @@ non-blocking.
 └───────────────────────────────────────────────────────────────┘
 ```
 
-- **Async by default.** Dispatches return in <1s with a job id; the
-  subagent runs detached. No blocking the main session on a long task.
+- **Foreground by default.** `/pi:run` waits for the subagent to finish
+  and prints its output, just like any normal tool call. Add `--bg` for
+  long jobs you want to fire and forget — and pick up later via
+  `/pi:status` and `/pi:result`.
+- **Live progress with `--verbose`.** Stream step transitions to the
+  terminal as they happen. Off by default to keep the orchestrator's
+  context tight.
 - **Heterogeneous models.** Use `--model openrouter/google/gemini-3-pro-preview`,
   `--model anthropic/claude-opus-4-7`, anything pi knows about.
-- **Worktree isolation.** `--worktree` runs each parallel task in its
-  own `git worktree` for safe concurrent edits.
+- **Worktree isolation.** `--worktree` runs the subagent in its own
+  `git worktree` for safe edits when several dispatches share a repo.
 - **MCP tools per agent or per dispatch.** Static via the agent file,
   dynamic via `--mcp foo/bar`.
 - **Auto-reconcile.** `state.json` syncs against pi's view on every
@@ -91,18 +96,25 @@ default specialist seeds into `.pi/agents/`, and gitignores
 ### 5. First run
 
 ```text
-/pi:run scout "how many .mjs files are in this repo?" --bg
+/pi:run scout "how many .mjs files are in this repo?"
+```
+
+The broker waits for scout to finish and prints its output. For long
+jobs you'd rather background, add `--bg`:
+
+```text
+/pi:run worker "rewrite the auth module" --bg
 ```
 
 Output (within ~1s):
 
 ```text
-Started job-001 (pi-run-id 0f214ec0-…) — agent=scout
+Started job-001 (pi-run-id 0f214ec0-…) — agent=worker
 Use /pi:status job-001 to inspect.
 ```
 
 Then `/pi:status job-001` shows live progress; `/pi:result job-001`
-prints the final output once scout is done.
+prints the final output once worker is done.
 
 ---
 
@@ -111,24 +123,23 @@ prints the final output once scout is done.
 | Command | What it does |
 |---|---|
 | `/pi:setup [--yes]` | Verify pi + pi-subagents + provider auth, scaffold `.pi/agents/`, gitignore `.pi-cc-plugin/`. Idempotent. |
-| `/pi:run <agent> <task…> [flags]` | Dispatch one task to one pi agent. |
-| `/pi:chain <agent>["task"] -> <agent>["task"] … [flags]` | Run agents sequentially; each step's output feeds the next. |
-| `/pi:parallel <agent>["task"] … [flags]` | Run agents concurrently. Add `--worktree` for filesystem isolation. |
+| `/pi:run <agent> <task…> [flags]` | Dispatch one task to one pi agent. Need to fan out? Call `/pi:run` multiple times in one assistant turn — Claude Code runs tool calls in parallel. |
 | `/pi:status [id]` | Without id: list every tracked job. With id: inspect one. Auto-reconciles `state.json` against pi. |
-| `/pi:result <id>` | Print the final markdown output (concatenated per-step for chain/parallel). |
+| `/pi:result <id>` | Print the final markdown output. |
 | `/pi:cancel <id>` | SIGTERM pi-subagents' parent + every detached worker carrying the runId; SIGKILL after 5s. |
 
 ### Flags
 
 | Flag | Where | Effect |
 |---|---|---|
-| `--bg` (default) | run/chain/parallel | Detach. Returns the run id immediately. |
-| `--wait` | run/chain/parallel | (reserved — currently the broker only does `--bg`) |
-| `--model <id>` | any | Override the agent's default model (e.g. `openrouter/google/gemini-3-pro-preview`). Always use `provider/model` form to avoid registry resolution surprises. |
-| `--fork` | run/chain/parallel | Run the subagent in a forked context (pi-subagents `context: "fork"`). |
-| `--worktree` | parallel | Create an isolated git worktree per task. Requires a clean working tree. |
-| `--mcp <list>` | run/chain/parallel | Attach MCP tools to this dispatch (comma-separated `server/tool`). See [MCP tools](#mcp-tools). |
-| `--cwd <path>` | run/chain/parallel | Run pi in a different working directory. |
+| `--wait` (default) | run | Wait for the subagent to finish; print its output when done. Redundant — same as omitting both flags. |
+| `--bg` | run | Detach. Returns the run id immediately; pick up via `/pi:status` and `/pi:result`. Use this for long runs or when you want to keep the orchestrator session free. In Claude Code you can also Ctrl+B Ctrl+B a running `/pi:run` to background it manually. |
+| `--verbose` | run | While waiting in foreground, stream step-transition lines (`· agent: running` → `· agent: complete`) to stdout. Off by default to keep the parent agent's context small. |
+| `--model <id>` | run | Override the agent's default model (e.g. `openrouter/google/gemini-3-pro-preview`). Always use `provider/model` form to avoid registry resolution surprises. |
+| `--fork` | run | Run the subagent in a forked context (pi-subagents `context: "fork"`). |
+| `--worktree` | run | Run the subagent in an isolated git worktree. Requires a clean working tree. Dispatches via the tool-call path (adds ~3-5s of latency). |
+| `--mcp <list>` | run | Attach MCP tools to this dispatch (comma-separated `server/tool`). See [MCP tools](#mcp-tools). |
+| `--cwd <path>` | run | Run pi in a different working directory. |
 | `--yes` | setup | Auto-apply scaffold/gitignore fixes. |
 
 ### Identifiers
@@ -230,36 +241,52 @@ Edit them freely — the plugin never overwrites once they exist.
 
 ### Cheap recon → expensive deep dive
 
+Two `/pi:run` calls. The orchestrator (Claude) reads scout's result,
+decides whether to keep going, then dispatches the deeper agent with
+that context embedded in the brief:
+
 ```text
-/pi:chain scout["map the affected modules"] -> oracle["critique the plan and surface risks"] --bg
+/pi:run scout "map the affected modules"
+# (foreground: scout's output is printed; orchestrator reads it)
+/pi:run oracle "Given scout's summary above, critique the plan and surface risks"
 ```
 
-(`oracle` is one of pi-subagents' builtins, defaulting to `gpt-5.5`.
-Use `--model openrouter/openai/gpt-5.5` if you don't have ChatGPT Plus
-auth.)
+This replaces the old `/pi:chain` form. Sequential agents almost always
+benefit from the orchestrator validating the previous step's output
+before deciding what to do next.
 
 ### Fan out with isolation
 
+Multiple `/pi:run --bg` calls from the same assistant turn — Claude
+Code runs tool calls in parallel, and `--bg` lets all three start
+without any one of them blocking the others:
+
 ```text
-/pi:parallel scout["audit frontend"] scout["audit backend"] scout["audit infra"] --worktree --bg
+/pi:run scout "audit frontend" --worktree --bg
+/pi:run scout "audit backend"  --worktree --bg
+/pi:run scout "audit infra"    --worktree --bg
 ```
 
 Each scout gets its own worktree under `/tmp/pi-worktree-<runId>-<n>`,
-torn down at run end. Requires a clean git working tree.
+torn down at run end. Requires a clean git working tree. Pick the
+results up later via `/pi:result job-001`, `/pi:result job-002`, etc.
 
 ### Lightweight test harness
 
 ```text
-/pi:chain test-writer["pin the contract for src/auth.ts"] -> test-reviewer["find gaps"] -> implementer["make the suite green"] -> code-reviewer["adversarial review"] --bg
+/pi:run test-writer "pin the contract for src/auth.ts"
+# orchestrator reads the test-writer brief from stdout, then:
+/pi:run implementer "make the suite at tests/auth.test.mjs green"
+# review the diff, then:
+/pi:run code-reviewer "adversarial review of the implementer diff"
 ```
 
-Each step's output (written to `{chain_dir}/<configured-output>`) is
-consumed by the next step.
+Foreground by default keeps the orchestrator in the loop between steps.
 
 ### Attach MCP tools just for this dispatch
 
 ```text
-/pi:run worker "implement the planned migration using the test-runner MCP" --mcp test-runner/run_suite,test-runner/diff --bg
+/pi:run worker "implement the planned migration using the test-runner MCP" --mcp test-runner/run_suite,test-runner/diff
 ```
 
 ---
@@ -279,7 +306,7 @@ consumed by the next step.
 │                                                         │      │
 │  ┌──────────────────────────────────────────────────────┴───┐  │
 │  │ pi (Node ≥20) loads pi-subagents extension              │  │
-│  │   handles slash command (/run|/chain|/parallel)         │  │
+│  │   handles /run slash command                            │  │
 │  │   OR direct subagent tool_call (--worktree path)        │  │
 │  │   emits subagent-slash-result with asyncId+asyncDir     │  │
 │  └──────────────────────────────────────────────────────┬───┘  │
@@ -362,6 +389,7 @@ pi-prices --json             # machine-readable
 | `PI_BROKER_PI_BIN` | (auto-resolved) | Override pi launcher (script or binary) |
 | `PI_BROKER_PI_ARGS` | (none) | Comma-separated args prepended after `PI_BROKER_PI_BIN` |
 | `PI_BROKER_DISPATCH_TIMEOUT_MS` | `60000` | How long to wait for pi to ack the slash command |
+| `PI_BROKER_POLL_INTERVAL_MS` | `1500` | Foreground poll interval against pi-subagents' status.json |
 | `PI_BROKER_SIGTERM_GRACE_MS` | `5000` | Cancel grace before SIGKILL |
 | `PI_BROKER_NO_NODE_VERSION_CHECK` | `0` | Skip the Node-≥20 fail-fast (for fixtures) |
 | `PI_BROKER_DEBUG` | `0` | Print stack traces on broker errors |
@@ -404,7 +432,7 @@ plugins/pi/
       gitignore.mjs                # ensure .pi-cc-plugin/ is ignored
       render.mjs                   # markdown for /pi:status and /pi:result
       setup-checks.mjs             # /pi:setup checks
-      actions/{run,chain,parallel,status,result,cancel,setup}.mjs
+      actions/{run,status,result,cancel,setup}.mjs
   agents-seed/                     # six default specialists
   commands/                        # one .md per slash command
   skills/{pi-cc-usage,pi-cc-harness}/SKILL.md
@@ -420,10 +448,14 @@ works end-to-end before dogfooding model dispatches.
 
 ## Status
 
-**Stable** — broker dispatch, status, result, cancel, chain, parallel,
-worktree (via tool_call path), `--mcp`, auto-reconcile.
+**Stable** — broker dispatch (`/pi:run`) with foreground polling and
+optional `--verbose` step streaming, `--bg` for detached runs, status,
+result, cancel, worktree (via tool_call path), `--mcp`, auto-reconcile.
 
-**Reserved** — `--wait` foreground mode (only `--bg` is wired today).
+**Removed** — `/pi:chain` and `/pi:parallel`. Use multiple `/pi:run`
+calls from the orchestrator instead: parallel falls out naturally
+(Claude Code runs tool calls concurrently), and sequencing benefits
+from the orchestrator validating each step before deciding the next.
 
 **Out of scope (v1)** — `/pi:steer` (pi-subagents has no steering API),
 pi-intercom bridge, integrated MCP server (state lives elsewhere).
@@ -435,8 +467,9 @@ pi-intercom bridge, integrated MCP server (state lives elsewhere).
 - [pi-coding-agent](https://github.com/mariozechner/pi-coding-agent) —
   the underlying multi-provider CLI.
 - [pi-subagents](https://github.com/nicobailon/pi-subagents) — extension
-  that provides the `subagent` tool + `/run`, `/chain`, `/parallel`
-  slash commands inside pi.
+  that provides the `subagent` tool + the `/run` slash command inside
+  pi. (pi-subagents also exposes `/chain` and `/parallel`; this plugin
+  no longer surfaces them — see Status above.)
 - [Claude Code](https://docs.claude.com/en/docs/claude-code) — the host.
 
 License: MIT.

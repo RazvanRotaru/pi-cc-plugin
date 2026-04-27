@@ -1,6 +1,6 @@
 ---
 description: Delegate a task to one pi agent. Backgrounds by default.
-argument-hint: "<agent> <task…> [--bg|--wait] [--model <m>] [--fork] [--cwd <p>]"
+argument-hint: "<agent> <task…> [--bg|--wait] [--model <m>] [--fork] [--worktree] [--mcp <list>] [--cwd <p>]"
 allowed-tools: ["Bash"]
 ---
 

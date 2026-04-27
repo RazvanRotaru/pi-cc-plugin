@@ -110,7 +110,29 @@ test("concurrent /pi:run calls produce unique internal_ids", async () => {
   );
 });
 
-test("/pi:run --wait streams pi output and records completion", async () => {
+test("/pi:run (default) waits for pi to complete and prints the final output", async () => {
+  await withTempCwd(async (cwd) =>
+    withFakePiTmp(async (piTmp) => {
+      const env = fakePiEnv({ FAKE_PI_TMPDIR: piTmp });
+      const { code, stdout } = await runBroker(
+        ["run", "worker", "do thing"],
+        { cwd, env },
+      );
+      assert.equal(code, 0);
+      assert.match(stdout, /Running job-001/);
+      assert.match(stdout, /Finished job-001 — completed/);
+      assert.match(stdout, /--- output ---/);
+      assert.match(stdout, /Lorem ipsum/);
+      const state = JSON.parse(
+        await readFile(join(cwd, ".pi-cc-plugin/state.json"), "utf8"),
+      );
+      assert.equal(state.jobs[0].status, "completed");
+      assert.ok(state.jobs[0].completed_at);
+    }),
+  );
+});
+
+test("/pi:run --wait is the same as the default", async () => {
   await withTempCwd(async (cwd) =>
     withFakePiTmp(async (piTmp) => {
       const env = fakePiEnv({ FAKE_PI_TMPDIR: piTmp });
@@ -119,9 +141,73 @@ test("/pi:run --wait streams pi output and records completion", async () => {
         { cwd, env },
       );
       assert.equal(code, 0);
-      assert.match(stdout, /Finished job-001/);
-      const state = JSON.parse(await readFile(join(cwd, ".pi-cc-plugin/state.json"), "utf8"));
-      assert.equal(state.jobs[0].status, "completed");
+      assert.match(stdout, /Finished job-001 — completed/);
+    }),
+  );
+});
+
+test("/pi:run polls until pi reaches a terminal state (delayed completion)", async () => {
+  await withTempCwd(async (cwd) =>
+    withFakePiTmp(async (piTmp) => {
+      // pi takes ~250ms to mark the run complete. The polling loop
+      // should hold the broker until then and then print the result.
+      const env = fakePiEnv({
+        FAKE_PI_TMPDIR: piTmp,
+        FAKE_PI_DELAY_MS: "250",
+        PI_BROKER_POLL_INTERVAL_MS: "50",
+      });
+      const t0 = Date.now();
+      const { code, stdout } = await runBroker(
+        ["run", "worker", "do thing"],
+        { cwd, env },
+      );
+      const elapsed = Date.now() - t0;
+      assert.equal(code, 0);
+      assert.ok(elapsed >= 200, `expected >=200ms wait, got ${elapsed}ms`);
+      assert.match(stdout, /Finished job-001 — completed/);
+      assert.match(stdout, /Lorem ipsum/);
+    }),
+  );
+});
+
+test("/pi:run --verbose emits step transitions while polling", async () => {
+  await withTempCwd(async (cwd) =>
+    withFakePiTmp(async (piTmp) => {
+      const env = fakePiEnv({
+        FAKE_PI_TMPDIR: piTmp,
+        FAKE_PI_DELAY_MS: "200",
+        PI_BROKER_POLL_INTERVAL_MS: "40",
+      });
+      const { code, stdout } = await runBroker(
+        ["run", "worker", "do thing", "--verbose"],
+        { cwd, env },
+      );
+      assert.equal(code, 0);
+      // Saw at least one step-transition line ("· worker: running" then
+      // "· worker: complete" — both from the same agent token).
+      assert.match(stdout, /· worker.*running/);
+      assert.match(stdout, /· worker.*complete/);
+    }),
+  );
+});
+
+test("/pi:run with a failing pi run records 'failed' and exits non-zero", async () => {
+  await withTempCwd(async (cwd) =>
+    withFakePiTmp(async (piTmp) => {
+      const env = fakePiEnv({
+        FAKE_PI_TMPDIR: piTmp,
+        FAKE_PI_SCENARIO: "fail",
+      });
+      const { code, stdout } = await runBroker(
+        ["run", "worker", "do thing"],
+        { cwd, env },
+      );
+      assert.notEqual(code, 0);
+      assert.match(stdout, /Finished job-001 — failed/);
+      const state = JSON.parse(
+        await readFile(join(cwd, ".pi-cc-plugin/state.json"), "utf8"),
+      );
+      assert.equal(state.jobs[0].status, "failed");
     }),
   );
 });

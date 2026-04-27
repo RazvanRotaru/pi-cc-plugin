@@ -240,36 +240,3 @@ test("/pi:run --mcp: dispatches under ephemeral name and cleans up", async () =>
   );
 });
 
-test("/pi:chain --mcp: writes one ephemeral per unique agent, cleans up", async () => {
-  await withTempCwd(async (cwd) =>
-    withFakePiTmp(async (piTmp) => {
-      const agentsDir = join(cwd, ".pi/agents");
-      await mkdir(agentsDir, { recursive: true });
-      await writeFile(join(agentsDir, "scout.md"), SAMPLE_AGENT);
-      await writeFile(
-        join(agentsDir, "reviewer.md"),
-        SAMPLE_AGENT.replace("name: scout", "name: reviewer"),
-      );
-
-      const env = fakePiEnv({ FAKE_PI_TMPDIR: piTmp });
-      const { code } = await runBroker(
-        [
-          "chain",
-          "scout[a]",
-          "->",
-          "reviewer[b]",
-          "--bg",
-          "--mcp",
-          "tt/get_ticket",
-        ],
-        { cwd, env },
-      );
-      assert.equal(code, 0);
-      const after = await readdir(agentsDir);
-      assert.deepEqual(
-        after.filter((f) => f.startsWith("_pi-cc-ephem-")),
-        [],
-      );
-    }),
-  );
-});

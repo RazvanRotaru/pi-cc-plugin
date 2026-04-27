@@ -4,7 +4,7 @@
 // Usage:
 //   node pi-broker.mjs <action> [args...]
 //
-// Actions: run | chain | parallel | status | result | cancel | setup
+// Actions: run | status | result | cancel | setup
 //
 // Each action is dispatched to a handler in scripts/lib/. The broker writes
 // to ./.pi-cc-plugin/state.json and reads pi's per-run status dir.

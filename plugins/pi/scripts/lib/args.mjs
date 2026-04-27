@@ -5,7 +5,6 @@
 //
 //   AGENT_SPEC   := IDENT '[' TASK ']'       e.g.   worker[fix the bug]
 //   INLINE_CFG   := '[' KEYVALS ']'          e.g.   [model=claude-opus-4-6,fork=true]
-//   CHAIN_SEP    := '->'                     between chain steps
 //   FLAG         := '--name' [VALUE]         e.g.   --bg, --model claude-opus-4-6
 //
 // The shell does the first level of splitting; we receive args as a string[]
@@ -20,7 +19,7 @@ const INLINE_CFG_RE = /^\[([^\]]+)\]$/;
 const IDENT_RE = /^[a-zA-Z_][a-zA-Z0-9_-]*$/;
 
 const FLAGS_VALUED = new Set(["model", "cwd", "mcp"]);
-const FLAGS_BOOLEAN = new Set(["bg", "wait", "fork", "worktree", "yes"]);
+const FLAGS_BOOLEAN = new Set(["bg", "wait", "fork", "worktree", "yes", "verbose"]);
 // Common guesses that map to canonical flag names so users don't get
 // punished for idiomatic intuition (--foreground/--background are the
 // natural way to say "run synchronously" / "run detached").
@@ -36,7 +35,7 @@ const FLAG_ALIASES = {
 /**
  * Parse the argv slice for a given action.
  *
- * @param {"run"|"chain"|"parallel"|"status"|"result"|"cancel"|"setup"} action
+ * @param {"run"|"status"|"result"|"cancel"|"setup"} action
  * @param {string[]} argv
  * @returns {{ payload: object, flags: object, raw: string[] }}
  *
@@ -49,10 +48,6 @@ export function parseArgs(action, argv) {
   switch (action) {
     case "run":
       return { payload: parseRun(positional, flags), flags, raw: argv };
-    case "chain":
-      return { payload: parseChain(positional, flags), flags, raw: argv };
-    case "parallel":
-      return { payload: parseParallel(positional, flags), flags, raw: argv };
     case "status":
     case "result":
     case "cancel":
@@ -97,11 +92,13 @@ function splitFlags(argv) {
       );
     }
   }
-  // Resolve --bg/--wait into a single mode. Default: bg.
+  // Resolve --bg/--wait into a single mode. Default: foreground (wait).
+  // Pass --bg explicitly to detach. --wait is accepted as a redundant
+  // explicit-foreground flag for clarity / muscle memory.
   if (flags.bg && flags.wait) {
     throw new Error("--bg and --wait are mutually exclusive");
   }
-  flags.background = flags.wait ? false : true;
+  flags.background = !!flags.bg;
   return { positional, flags };
 }
 
@@ -157,6 +154,8 @@ function parseRun(positional, flags) {
     task,
     background: flags.background,
     fork: !!flags.fork,
+    worktree: !!flags.worktree,
+    verbose: !!flags.verbose,
     model: flags.model ?? inlineConfig.model,
     cwd: flags.cwd ?? inlineConfig.cwd,
     mcp: parseMcpList(flags.mcp),
@@ -179,78 +178,6 @@ export function parseMcpList(raw) {
     .split(",")
     .map((s) => s.trim().replace(/^mcp:/, ""))
     .filter(Boolean);
-}
-
-function parseChain(positional, flags) {
-  if (positional.length === 0) {
-    throw new Error("/pi:chain expects at least one step");
-  }
-  const steps = [];
-  let current = [];
-  for (const tok of positional) {
-    if (tok === "->") {
-      steps.push(parseChainStep(current));
-      current = [];
-    } else {
-      current.push(tok);
-    }
-  }
-  if (current.length > 0) steps.push(parseChainStep(current));
-  if (steps.length === 0) throw new Error("/pi:chain produced zero steps");
-
-  return {
-    action: "chain",
-    steps,
-    background: flags.background,
-    fork: !!flags.fork,
-    model: flags.model,
-    cwd: flags.cwd,
-    mcp: parseMcpList(flags.mcp),
-  };
-}
-
-function parseChainStep(tokens) {
-  if (tokens.length === 0) throw new Error("empty chain step");
-  const head = tokens[0];
-  const specMatch = AGENT_SPEC_RE.exec(head);
-  if (specMatch) {
-    const extras = tokens.slice(1).join(" ").trim();
-    const task = extras ? `${specMatch[2].trim()} ${extras}` : specMatch[2].trim();
-    return { agent: specMatch[1], task };
-  }
-  if (!IDENT_RE.test(head)) {
-    throw new Error(`chain step must start with an agent name, got: ${head}`);
-  }
-  if (tokens.length < 2) {
-    throw new Error(`chain step "${head}" needs a task description`);
-  }
-  return { agent: head, task: tokens.slice(1).join(" ").trim() };
-}
-
-function parseParallel(positional, flags) {
-  if (positional.length === 0) {
-    throw new Error("/pi:parallel expects at least one agent[task] item");
-  }
-  const tasks = [];
-  for (const tok of positional) {
-    const specMatch = AGENT_SPEC_RE.exec(tok);
-    if (!specMatch) {
-      throw new Error(
-        `/pi:parallel items must use agent["task"] form (got: ${tok}). ` +
-          "Use /pi:run or /pi:chain for free-form task strings.",
-      );
-    }
-    tasks.push({ agent: specMatch[1], task: specMatch[2].trim() });
-  }
-  return {
-    action: "parallel",
-    tasks,
-    worktree: !!flags.worktree,
-    background: flags.background,
-    model: flags.model,
-    cwd: flags.cwd,
-    mcp: parseMcpList(flags.mcp),
-  };
 }
 
 function parseSingleId(action, positional) {
