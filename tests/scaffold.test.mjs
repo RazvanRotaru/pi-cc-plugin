@@ -49,9 +49,9 @@ test("plugin.json has version + description", async () => {
   assert.ok(data.description);
 });
 
-test("every command file references the broker", async () => {
-  const cmds = ["status", "run", "result", "cancel", "setup"];
-  for (const cmd of cmds) {
+test("every command file reaches the broker", async () => {
+  const directBrokerCmds = ["status", "result", "cancel", "setup"];
+  for (const cmd of directBrokerCmds) {
     const body = await readFile(
       resolve(REPO_ROOT, `plugins/pi/commands/${cmd}.md`),
       "utf8",
@@ -59,4 +59,18 @@ test("every command file references the broker", async () => {
     assert.match(body, /pi-broker\.mjs/, `command "${cmd}" must invoke pi-broker.mjs`);
     assert.match(body, new RegExp(`pi-broker\\.mjs"?\\s+${cmd}\\b`));
   }
+
+  // /pi:run dispatches via the pi-run subagent, which then invokes the broker.
+  const runBody = await readFile(
+    resolve(REPO_ROOT, "plugins/pi/commands/run.md"),
+    "utf8",
+  );
+  assert.match(runBody, /subagent_type:\s*"pi:pi-run"/, "/pi:run must dispatch via the pi:pi-run subagent");
+
+  const agentBody = await readFile(
+    resolve(REPO_ROOT, "plugins/pi/agents/pi-run.md"),
+    "utf8",
+  );
+  assert.match(agentBody, /pi-broker\.mjs/, "pi-run subagent must invoke pi-broker.mjs");
+  assert.match(agentBody, /pi-broker\.mjs"?\s+run\b/);
 });
