@@ -7,7 +7,7 @@
 // closes stdin so pi's main LLM loop short-circuits — the dispatched
 // subagent is detached and keeps running independently.
 //
-// Foreground waiting (the default `/pi:run` mode) lives one layer up,
+// Foreground waiting (the default `/pi:agent` mode) lives one layer up,
 // in actions/run.mjs — this module is dispatch-only. After capture,
 // the run.mjs polling loop reads pi-subagents' status.json directly.
 

@@ -104,7 +104,7 @@ function splitFlags(argv) {
 
 function parseRun(positional, flags) {
   if (positional.length === 0) {
-    throw new Error("/pi:run expects an agent name (e.g. /pi:run worker \"fix bug\")");
+    throw new Error("/pi:agent expects an agent name (e.g. /pi:agent worker \"fix bug\")");
   }
 
   // Form 1: agent[task]
@@ -140,7 +140,7 @@ function parseRun(positional, flags) {
   // Remaining tokens form the task body (only if task wasn't already set).
   if (task === undefined) {
     if (rest.length === 0) {
-      throw new Error(`/pi:run ${agent} expects a task description`);
+      throw new Error(`/pi:agent ${agent} expects a task description`);
     }
     task = rest.join(" ").trim();
   } else if (rest.length > 0) {

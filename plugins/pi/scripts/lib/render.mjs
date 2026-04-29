@@ -65,7 +65,7 @@ export function renderJob(job, piStatus) {
  * Render a header + a sequence of jobs.
  */
 export function renderJobList(jobs, piStatuses) {
-  if (jobs.length === 0) return "No pi jobs tracked yet. Try /pi:run.";
+  if (jobs.length === 0) return "No pi jobs tracked yet. Try /pi:agent.";
   const blocks = jobs.map((job, i) => renderJob(job, piStatuses[i]));
   return `# pi-cc-plugin: ${jobs.length} job${jobs.length === 1 ? "" : "s"}\n\n${blocks.join("\n\n")}`;
 }

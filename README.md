@@ -14,7 +14,7 @@ non-blocking.
 ```text
 ┌─ Claude Code (orchestrator, Claude) ─────────────────────────┐
 │                                                               │
-│  /pi:run worker  "fix the auth bug"  --model openrouter/...   │
+│  /pi:agent worker "fix the auth bug" --model openrouter/...  │
 │       │                                                       │
 │       ▼                                                       │
 │   pi-broker → pi --mode rpc → pi-subagents → child pi process │
@@ -25,7 +25,7 @@ non-blocking.
 └───────────────────────────────────────────────────────────────┘
 ```
 
-- **Foreground by default.** `/pi:run` waits for the subagent to finish
+- **Foreground by default.** `/pi:agent` waits for the subagent to finish
   and prints its output, just like any normal tool call. Add `--bg` for
   long jobs you want to fire and forget — and pick up later via
   `/pi:status` and `/pi:result`.
@@ -96,14 +96,14 @@ default specialist seeds into `.pi/agents/`, and gitignores
 ### 5. First run
 
 ```text
-/pi:run scout "how many .mjs files are in this repo?"
+/pi:agent scout "how many .mjs files are in this repo?"
 ```
 
 The broker waits for scout to finish and prints its output. For long
 jobs you'd rather background, add `--bg`:
 
 ```text
-/pi:run worker "rewrite the auth module" --bg
+/pi:agent worker "rewrite the auth module" --bg
 ```
 
 Output (within ~1s):
@@ -123,7 +123,7 @@ prints the final output once worker is done.
 | Command | What it does |
 |---|---|
 | `/pi:setup [--yes]` | Verify pi + pi-subagents + provider auth, scaffold `.pi/agents/`, gitignore `.pi-cc-plugin/`. Idempotent. |
-| `/pi:run <agent> <task…> [flags]` | Dispatch one task to one pi agent. Need to fan out? Call `/pi:run` multiple times in one assistant turn — Claude Code runs tool calls in parallel. |
+| `/pi:agent <agent> <task…> [flags]` | Dispatch one task to one pi agent. Need to fan out? Call `/pi:agent` multiple times in one assistant turn — Claude Code runs tool calls in parallel. |
 | `/pi:status [id]` | Without id: list every tracked job. With id: inspect one. Auto-reconciles `state.json` against pi. |
 | `/pi:result <id>` | Print the final markdown output. |
 | `/pi:cancel <id>` | SIGTERM pi-subagents' parent + every detached worker carrying the runId; SIGKILL after 5s. |
@@ -133,7 +133,7 @@ prints the final output once worker is done.
 | Flag | Where | Effect |
 |---|---|---|
 | `--wait` (default) | run | Wait for the subagent to finish; print its output when done. Redundant — same as omitting both flags. |
-| `--bg` | run | Detach. Returns the run id immediately; pick up via `/pi:status` and `/pi:result`. Use this for long runs or when you want to keep the orchestrator session free. In Claude Code you can also Ctrl+B Ctrl+B a running `/pi:run` to background it manually. |
+| `--bg` | run | Detach. Returns the run id immediately; pick up via `/pi:status` and `/pi:result`. Use this for long runs or when you want to keep the orchestrator session free. In Claude Code you can also Ctrl+B Ctrl+B a running `/pi:agent` to background it manually. |
 | `--verbose` | run | While waiting in foreground, stream step-transition lines (`· agent: running` → `· agent: complete`) to stdout. Off by default to keep the parent agent's context small. |
 | `--model <id>` | run | Override the agent's default model (e.g. `openrouter/google/gemini-3-pro-preview`). Always use `provider/model` form to avoid registry resolution surprises. |
 | `--fork` | run | Run the subagent in a forked context (pi-subagents `context: "fork"`). |
@@ -202,7 +202,7 @@ skills: clean-code
 ---
 ```
 
-Any `/pi:run implementer …` then has those MCP tools available without
+Any `/pi:agent implementer …` then has those MCP tools available without
 extra flags.
 
 If you want a **per-dispatch** MCP override (one-off experimentation,
@@ -212,7 +212,7 @@ agent file with the extra tools, dispatches under that name, and cleans
 up after asyncId capture:
 
 ```text
-/pi:run scout "find auth bugs" --mcp memory/store,memory/read --bg
+/pi:agent scout "find auth bugs" --mcp memory/store,memory/read --bg
 ```
 
 Source resolution order for `--mcp`: project seed (`.pi/agents/`) →
@@ -241,14 +241,14 @@ Edit them freely — the plugin never overwrites once they exist.
 
 ### Cheap recon → expensive deep dive
 
-Two `/pi:run` calls. The orchestrator (Claude) reads scout's result,
+Two `/pi:agent` calls. The orchestrator (Claude) reads scout's result,
 decides whether to keep going, then dispatches the deeper agent with
 that context embedded in the brief:
 
 ```text
-/pi:run scout "map the affected modules"
+/pi:agent scout "map the affected modules"
 # (foreground: scout's output is printed; orchestrator reads it)
-/pi:run oracle "Given scout's summary above, critique the plan and surface risks"
+/pi:agent oracle "Given scout's summary above, critique the plan and surface risks"
 ```
 
 This replaces the old `/pi:chain` form. Sequential agents almost always
@@ -257,14 +257,14 @@ before deciding what to do next.
 
 ### Fan out with isolation
 
-Multiple `/pi:run --bg` calls from the same assistant turn — Claude
+Multiple `/pi:agent --bg` calls from the same assistant turn — Claude
 Code runs tool calls in parallel, and `--bg` lets all three start
 without any one of them blocking the others:
 
 ```text
-/pi:run scout "audit frontend" --worktree --bg
-/pi:run scout "audit backend"  --worktree --bg
-/pi:run scout "audit infra"    --worktree --bg
+/pi:agent scout "audit frontend" --worktree --bg
+/pi:agent scout "audit backend"  --worktree --bg
+/pi:agent scout "audit infra"    --worktree --bg
 ```
 
 Each scout gets its own worktree under `/tmp/pi-worktree-<runId>-<n>`,
@@ -274,11 +274,11 @@ results up later via `/pi:result job-001`, `/pi:result job-002`, etc.
 ### Lightweight test harness
 
 ```text
-/pi:run test-writer "pin the contract for src/auth.ts"
+/pi:agent test-writer "pin the contract for src/auth.ts"
 # orchestrator reads the test-writer brief from stdout, then:
-/pi:run implementer "make the suite at tests/auth.test.mjs green"
+/pi:agent implementer "make the suite at tests/auth.test.mjs green"
 # review the diff, then:
-/pi:run code-reviewer "adversarial review of the implementer diff"
+/pi:agent code-reviewer "adversarial review of the implementer diff"
 ```
 
 Foreground by default keeps the orchestrator in the loop between steps.
@@ -286,7 +286,7 @@ Foreground by default keeps the orchestrator in the loop between steps.
 ### Attach MCP tools just for this dispatch
 
 ```text
-/pi:run worker "implement the planned migration using the test-runner MCP" --mcp test-runner/run_suite,test-runner/diff
+/pi:agent worker "implement the planned migration using the test-runner MCP" --mcp test-runner/run_suite,test-runner/diff
 ```
 
 ---
@@ -448,11 +448,11 @@ works end-to-end before dogfooding model dispatches.
 
 ## Status
 
-**Stable** — broker dispatch (`/pi:run`) with foreground polling and
+**Stable** — broker dispatch (`/pi:agent`) with foreground polling and
 optional `--verbose` step streaming, `--bg` for detached runs, status,
 result, cancel, worktree (via tool_call path), `--mcp`, auto-reconcile.
 
-**Removed** — `/pi:chain` and `/pi:parallel`. Use multiple `/pi:run`
+**Removed** — `/pi:chain` and `/pi:parallel`. Use multiple `/pi:agent`
 calls from the orchestrator instead: parallel falls out naturally
 (Claude Code runs tool calls concurrently), and sequencing benefits
 from the orchestrator validating each step before deciding the next.

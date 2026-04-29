@@ -1,11 +1,11 @@
-// preflight.mjs — fast, cached health check before /pi:run dispatch.
+// preflight.mjs — fast, cached health check before /pi:agent dispatch.
 //
 // Without this, missing pi or missing pi-subagents shows up to the user
 // as a 60s+ "timed out waiting for subagent-slash-result" — confusing,
 // because the broker is just sitting in a handshake against nothing.
 //
 // The check is filesystem-only: no subprocesses. ~1ms per call. Result
-// cached in-process so each /pi:run dispatch pays it once at most.
+// cached in-process so each /pi:agent dispatch pays it once at most.
 //
 // Cache lifetime is per-broker-process, so each slash command run does
 // pay the first call once. With dispatch-cost dominating overall

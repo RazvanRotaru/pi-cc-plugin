@@ -214,7 +214,7 @@ test("displayAgentName: strips the ephemeral prefix back to the original name", 
   assert.equal(displayAgentName(undefined), undefined);
 });
 
-test("/pi:run --mcp: dispatches under ephemeral name and cleans up", async () => {
+test("/pi:agent --mcp: dispatches under ephemeral name and cleans up", async () => {
   await withTempCwd(async (cwd) =>
     withFakePiTmp(async (piTmp) => {
       const agentsDir = join(cwd, ".pi/agents");

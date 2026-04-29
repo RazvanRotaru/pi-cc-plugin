@@ -1,4 +1,4 @@
-// /pi:run — delegate one task to one pi agent.
+// /pi:agent — delegate one task to one pi agent.
 //
 // Foreground (default): dispatch, then poll pi-subagents' status.json
 // until the run reaches a terminal state, then print the final output.

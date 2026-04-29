@@ -5,7 +5,7 @@
 //
 // All writes go through `update(stateFile, fn)` — the function receives the
 // current state and returns the new state. The wrapper handles locking and
-// atomic rename, so concurrent /pi:run calls don't corrupt the file.
+// atomic rename, so concurrent /pi:agent calls don't corrupt the file.
 
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";

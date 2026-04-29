@@ -1,6 +1,6 @@
 ---
 name: pi-cc-harness
-description: Harness-specific guidance — when to dispatch via Claude Code's Agent tool vs /pi:run, how to monitor a dispatched specialist, and how to interpret /pi:status.
+description: Harness-specific guidance — when to dispatch via Claude Code's Agent tool vs /pi:agent, how to monitor a dispatched specialist, and how to interpret /pi:status.
 ---
 
 # `pi-cc-plugin` for the orchestrator
@@ -15,7 +15,7 @@ For every specialist invocation:
 1. Read the specialist's frontmatter from `.pi/agents/<role>.md`.
 2. If `model` is one Claude Code can run natively (currently the
    `anthropic/claude-*` family), dispatch via the **Agent tool**.
-3. Otherwise, dispatch via **`/pi:run`** (this plugin).
+3. Otherwise, dispatch via **`/pi:agent`** (this plugin).
 
 Don't try to short-circuit the decision based on what's "easier". Pi-side
 specialists need to be dispatched by pi so pi can supply the model
@@ -28,17 +28,17 @@ Every specialist call — pi-side or Claude-side — must carry enough
 context for the specialist to act independently: which task they're
 acting on, where the relevant files are, what the prior step produced.
 
-For `/pi:run` dispatches, embed the context in the task brief:
+For `/pi:agent` dispatches, embed the context in the task brief:
 
 ```
-/pi:run implementer Implement the function from .work/AUTOPILOT-123/architect-brief.md. Tests live at tests/auth.test.mjs. Make them green.
+/pi:agent implementer Implement the function from .work/AUTOPILOT-123/architect-brief.md. Tests live at tests/auth.test.mjs. Make them green.
 ```
 
 The specialist sees the entire prompt as their `task` argument. Pi reads
 agent frontmatter from `.pi/agents/implementer.md` for its model,
 thinking level, tools, etc.
 
-By default `/pi:run` waits and prints the specialist's output inline, so
+By default `/pi:agent` waits and prints the specialist's output inline, so
 the orchestrator can read it directly from the tool result. Add `--bg`
 when the specialist is expected to take long enough that you'd rather
 fan out other work in the meantime, then pick up the result via
