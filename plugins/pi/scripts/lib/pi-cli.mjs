@@ -194,10 +194,15 @@ export async function piExec({
  * config (model, skill, output, reads, progress).
  */
 export function buildSlashCommand(payload) {
-  const flags = [];
-  if (payload.background) flags.push("--bg");
+  // Always pass --bg. pi-subagents only emits the asyncId/asyncDir
+  // markers the broker captures when --bg is set; in sync mode it
+  // returns the final result inline and the broker waits for markers
+  // that never arrive. User-foreground vs user-background is handled
+  // by the broker's polling loop (actions/run.mjs) — only the wait
+  // behavior differs there; both modes need the markers.
+  const flags = ["--bg"];
   if (payload.fork) flags.push("--fork");
-  const flagSuffix = flags.length ? ` ${flags.join(" ")}` : "";
+  const flagSuffix = ` ${flags.join(" ")}`;
 
   const inlineConfig = collectInlineConfig(payload);
 
@@ -260,8 +265,10 @@ function subagentToolArgs(payload) {
   if (payload.action !== "run") {
     throw new Error(`pi-cli: unknown payload action: ${payload.action}`);
   }
-  const flags = {};
-  if (payload.background) flags.async = true;
+  // Always async — same reason as buildSlashCommand: the broker needs
+  // the asyncId/asyncDir markers, which pi-subagents only emits in
+  // async mode. User-foreground polling lives in actions/run.mjs.
+  const flags = { async: true };
   if (payload.fork) flags.context = "fork";
   if (payload.worktree) flags.worktree = true;
 
