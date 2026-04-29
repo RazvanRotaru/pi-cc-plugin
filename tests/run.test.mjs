@@ -75,6 +75,10 @@ test("/pi:status after one /pi:agent shows the job", async () => {
       assert.match(stdout, /do thing/);
       // pi's status.json says "completed" (fake-pi finishes immediately).
       assert.match(stdout, /completed/);
+      // events.jsonl from pi-subagents is forwarded raw under `events:`.
+      assert.match(stdout, /events:/);
+      assert.match(stdout, /"type":"subagent\.run\.started"/);
+      assert.match(stdout, /"type":"subagent\.run\.completed"/);
     }),
   );
 });

@@ -14,8 +14,12 @@ const TERMINAL_BROKER = new Set(["completed", "cancelled", "failed"]);
  * (the broker recorded a final state on user intent — e.g. cancellation
  * — and pi-subagents' status.json may not have caught up). Otherwise we
  * trust pi-subagents' fresher state.json.
+ *
+ * `events` (optional) is the array from `readPiEvents`; we dump it raw,
+ * one JSON object per line. The orchestrator interprets it — no
+ * summarization or filtering here.
  */
-export function renderJob(job, piStatus) {
+export function renderJob(job, piStatus, events) {
   const piState = piStatus ? mapPiState(piStatus.state) : null;
   const reconciled = TERMINAL_BROKER.has(job.status)
     ? job.status
@@ -58,15 +62,24 @@ export function renderJob(job, piStatus) {
   } else if (job.pi_status_dir) {
     lines.push("  (pi status dir not readable — may have been cleaned up)");
   }
+  if (Array.isArray(events) && events.length) {
+    lines.push("  events:");
+    for (const ev of events) {
+      lines.push(`    ${JSON.stringify(ev)}`);
+    }
+  }
   return lines.join("\n");
 }
 
 /**
- * Render a header + a sequence of jobs.
+ * Render a header + a sequence of jobs. `eventsList[i]` lines up with
+ * `jobs[i]` / `piStatuses[i]` and may be null when events.jsonl is missing.
  */
-export function renderJobList(jobs, piStatuses) {
+export function renderJobList(jobs, piStatuses, eventsList) {
   if (jobs.length === 0) return "No pi jobs tracked yet. Try /pi:agent.";
-  const blocks = jobs.map((job, i) => renderJob(job, piStatuses[i]));
+  const blocks = jobs.map((job, i) =>
+    renderJob(job, piStatuses[i], eventsList?.[i]),
+  );
   return `# pi-cc-plugin: ${jobs.length} job${jobs.length === 1 ? "" : "s"}\n\n${blocks.join("\n\n")}`;
 }
 
