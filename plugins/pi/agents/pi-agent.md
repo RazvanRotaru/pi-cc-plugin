@@ -1,7 +1,7 @@
 ---
-name: pi-run
-description: Thin forwarder that dispatches a /pi:run task to the pi broker. Use when the user wants to delegate to one pi specialist agent.
-model: haiku
+name: pi-agent
+description: Thin forwarder that dispatches a /pi:agent task to the pi broker. Use when the user wants to delegate to one pi specialist agent.
+model: sonnet
 tools: Bash
 ---
 

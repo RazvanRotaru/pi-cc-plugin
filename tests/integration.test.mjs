@@ -67,7 +67,7 @@ test("happy path: setup → run → status → result → cancel", async () => {
   );
 });
 
-test("/pi:run --worktree dispatches via tool form (no slash)", async () => {
+test("/pi:agent --worktree dispatches via tool form (no slash)", async () => {
   await withTempCwd(async (cwd) =>
     withFakePiTmp(async (piTmp) => {
       const env = fakePiEnv({ FAKE_PI_TMPDIR: piTmp });

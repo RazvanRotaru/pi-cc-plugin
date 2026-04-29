@@ -44,10 +44,10 @@ Expected (all green):
 If `pi installed` fails: `which pi`, `node --version` ≥ 20.
 If `pi-subagents installed` fails: `pi list | grep pi-subagents`.
 
-## 2. `/pi:run` with a Claude model
+## 2. `/pi:agent` with a Claude model
 
 ```
-/pi:run worker write a one-paragraph haiku about caches --model anthropic/claude-sonnet-4-6
+/pi:agent worker write a one-paragraph haiku about caches --model anthropic/claude-sonnet-4-6
 ```
 
 Expected:
@@ -58,22 +58,22 @@ Expected:
 
 To dispatch and detach instead, add `--bg`:
 ```
-/pi:run worker "rewrite the auth module" --bg
+/pi:agent worker "rewrite the auth module" --bg
 # Started job-002 — pick up via /pi:status / /pi:result later.
 ```
 
 To watch progress live in foreground, add `--verbose` — you'll see
 `· worker: running` then `· worker: complete` as pi advances.
 
-## 3. `/pi:run` with a non-Claude model
+## 3. `/pi:agent` with a non-Claude model
 
 This is the load-bearing test for the design — pi is what makes
 non-Claude specialists possible.
 
 ```
-/pi:run worker same haiku task --model openrouter/google/gemini-3-pro-preview
+/pi:agent worker same haiku task --model openrouter/google/gemini-3-pro-preview
 # or:
-/pi:run worker same haiku task --model openrouter/openai/gpt-5.5
+/pi:agent worker same haiku task --model openrouter/openai/gpt-5.5
 ```
 
 Expected: same shape as step 2, but the result text comes from the
@@ -82,13 +82,13 @@ exactly what we passed.
 
 Verify: `cat /tmp/pi-subagents-uid-$(id -u)/async-subagent-runs/<uuid>/status.json | jq '.steps[].model'`.
 
-## 4. Fan out via multiple `/pi:run` calls
+## 4. Fan out via multiple `/pi:agent` calls
 
 In one assistant turn (Claude Code runs tool calls concurrently):
 
 ```
-/pi:run scout "count .mjs files" --bg
-/pi:run scout "count .md files"  --bg
+/pi:agent scout "count .mjs files" --bg
+/pi:agent scout "count .md files"  --bg
 ```
 
 Expected: two distinct internal_ids, both `running`, both `completed`
@@ -98,10 +98,10 @@ For sequential pipelines, dispatch the next step from the orchestrator
 after reading the previous step's `/pi:result` — this keeps the
 orchestrator (Claude) in the loop to validate intermediate output.
 
-## 4a. `--worktree` isolation on `/pi:run`
+## 4a. `--worktree` isolation on `/pi:agent`
 
 ```
-/pi:run scout "count js files" --worktree --bg
+/pi:agent scout "count js files" --worktree --bg
 ```
 
 Expected:
@@ -116,7 +116,7 @@ Expected:
 ## 4b. GAN flow with the seed agents
 
 ```
-/pi:run architect "review plugins/pi/scripts/lib/pi-cli.mjs and propose 2 simplifications" --bg
+/pi:agent architect "review plugins/pi/scripts/lib/pi-cli.mjs and propose 2 simplifications" --bg
 /pi:status job-N           # poll until completed
 /pi:result job-N           # read the architect's brief
 ```
@@ -133,7 +133,7 @@ their seed frontmatter — pi will fall back to the workspace's
 ```
 # Start a long-ish run, detached so we can issue the cancel from the
 # same Claude Code session.
-/pi:run worker think out loud about caches for 500 words --bg
+/pi:agent worker think out loud about caches for 500 words --bg
 
 /pi:status                      # confirm it's running
 /pi:cancel job-001              # SIGTERM the pi-subagents parent
@@ -152,7 +152,7 @@ Expected:
 ## 6. Forced model failure surfaces clearly
 
 ```
-/pi:run worker test --model openrouter/no-such-model
+/pi:agent worker test --model openrouter/no-such-model
 ```
 
 Expected:

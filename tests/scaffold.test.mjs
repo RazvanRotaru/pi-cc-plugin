@@ -60,17 +60,17 @@ test("every command file reaches the broker", async () => {
     assert.match(body, new RegExp(`pi-broker\\.mjs"?\\s+${cmd}\\b`));
   }
 
-  // /pi:run dispatches via the pi-run subagent, which then invokes the broker.
-  const runBody = await readFile(
-    resolve(REPO_ROOT, "plugins/pi/commands/run.md"),
+  // /pi:agent dispatches via the pi-agent subagent, which then invokes the broker.
+  const commandBody = await readFile(
+    resolve(REPO_ROOT, "plugins/pi/commands/agent.md"),
     "utf8",
   );
-  assert.match(runBody, /subagent_type:\s*"pi:pi-run"/, "/pi:run must dispatch via the pi:pi-run subagent");
+  assert.match(commandBody, /subagent_type:\s*"pi:pi-agent"/, "/pi:agent must dispatch via the pi:pi-agent subagent");
 
-  const agentBody = await readFile(
-    resolve(REPO_ROOT, "plugins/pi/agents/pi-run.md"),
+  const subagentBody = await readFile(
+    resolve(REPO_ROOT, "plugins/pi/agents/pi-agent.md"),
     "utf8",
   );
-  assert.match(agentBody, /pi-broker\.mjs/, "pi-run subagent must invoke pi-broker.mjs");
-  assert.match(agentBody, /pi-broker\.mjs"?\s+run\b/);
+  assert.match(subagentBody, /pi-broker\.mjs/, "pi-agent subagent must invoke pi-broker.mjs");
+  assert.match(subagentBody, /pi-broker\.mjs"?\s+run\b/);
 });

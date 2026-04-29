@@ -184,7 +184,7 @@ export async function checkPiAuth({ env }) {
       "    A. Subscription:    run `pi`, then /login (Claude Pro/Max, ChatGPT Plus, Gemini CLI, etc.)\n" +
       "    B. API key file:    run `pi`, then /login (saves to ~/.pi/agent/auth.json with 0600 perms)\n" +
       "    C. Env var:         export OPENROUTER_API_KEY=sk-or-... (or ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)\n" +
-      "  /pi:run will fail with `No API key found for <provider>` until one of these is set.",
+      "  /pi:agent will fail with `No API key found for <provider>` until one of these is set.",
     fixable: false,
   };
 }

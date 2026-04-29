@@ -1,12 +1,12 @@
 ---
-description: Delegate a task to one pi agent. Backgrounds by default.
+description: Delegate a task to one pi agent. Waits for completion by default; pass --bg to detach.
 argument-hint: "<agent> <task…> [--bg|--wait] [--model <m>] [--fork] [--worktree] [--mcp <list>] [--cwd <p>]"
 allowed-tools: ["Agent"]
 ---
 
-Invoke the `pi:pi-run` subagent via the `Agent` tool (`subagent_type: "pi:pi-run"`), forwarding the raw user request as the prompt.
+Invoke the `pi:pi-agent` subagent via the `Agent` tool (`subagent_type: "pi:pi-agent"`), forwarding the raw user request as the prompt.
 
-`pi:pi-run` is a subagent, not a skill — do not call `Skill(pi:pi-run)` (no such skill) or `Skill(pi:run)` (that re-enters this command and would hang the session).
+`pi:pi-agent` is a subagent, not a skill — do not call `Skill(pi:pi-agent)` (no such skill) or `Skill(pi:agent)` (that re-enters this command and would hang the session).
 
 The final user-visible response must be the pi broker's output verbatim.
 

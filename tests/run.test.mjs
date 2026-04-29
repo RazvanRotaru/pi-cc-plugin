@@ -14,7 +14,7 @@ async function withFakePiTmp(fn) {
   }
 }
 
-test("/pi:run worker 'task' --bg records a job and returns the run id", async () => {
+test("/pi:agent worker 'task' --bg records a job and returns the run id", async () => {
   await withTempCwd(async (cwd) =>
     withFakePiTmp(async (piTmp) => {
       const env = fakePiEnv({
@@ -42,7 +42,7 @@ test("/pi:run worker 'task' --bg records a job and returns the run id", async ()
   );
 });
 
-test("/pi:run gitignores .pi-cc-plugin/ on first use in a git repo", async () => {
+test("/pi:agent gitignores .pi-cc-plugin/ on first use in a git repo", async () => {
   await withTempCwd(async (cwd) =>
     withFakePiTmp(async (piTmp) => {
       await mkdir(join(cwd, ".git"));
@@ -63,7 +63,7 @@ test("/pi:status with no args shows the alive line for an empty workspace", asyn
   });
 });
 
-test("/pi:status after one /pi:run shows the job", async () => {
+test("/pi:status after one /pi:agent shows the job", async () => {
   await withTempCwd(async (cwd) =>
     withFakePiTmp(async (piTmp) => {
       const env = fakePiEnv({ FAKE_PI_TMPDIR: piTmp, FAKE_PI_RUN_ID: "deadbeef00" });
@@ -92,7 +92,7 @@ test("/pi:status <id> inspects one job by internal id", async () => {
   );
 });
 
-test("concurrent /pi:run calls produce unique internal_ids", async () => {
+test("concurrent /pi:agent calls produce unique internal_ids", async () => {
   await withTempCwd(async (cwd) =>
     withFakePiTmp(async (piTmp) => {
       const env = fakePiEnv({ FAKE_PI_TMPDIR: piTmp });
@@ -110,7 +110,7 @@ test("concurrent /pi:run calls produce unique internal_ids", async () => {
   );
 });
 
-test("/pi:run (default) waits for pi to complete and prints the final output", async () => {
+test("/pi:agent (default) waits for pi to complete and prints the final output", async () => {
   await withTempCwd(async (cwd) =>
     withFakePiTmp(async (piTmp) => {
       const env = fakePiEnv({ FAKE_PI_TMPDIR: piTmp });
@@ -132,7 +132,7 @@ test("/pi:run (default) waits for pi to complete and prints the final output", a
   );
 });
 
-test("/pi:run --wait is the same as the default", async () => {
+test("/pi:agent --wait is the same as the default", async () => {
   await withTempCwd(async (cwd) =>
     withFakePiTmp(async (piTmp) => {
       const env = fakePiEnv({ FAKE_PI_TMPDIR: piTmp });
@@ -146,7 +146,7 @@ test("/pi:run --wait is the same as the default", async () => {
   );
 });
 
-test("/pi:run polls until pi reaches a terminal state (delayed completion)", async () => {
+test("/pi:agent polls until pi reaches a terminal state (delayed completion)", async () => {
   await withTempCwd(async (cwd) =>
     withFakePiTmp(async (piTmp) => {
       // pi takes ~250ms to mark the run complete. The polling loop
@@ -170,7 +170,7 @@ test("/pi:run polls until pi reaches a terminal state (delayed completion)", asy
   );
 });
 
-test("/pi:run --verbose emits step transitions while polling", async () => {
+test("/pi:agent --verbose emits step transitions while polling", async () => {
   await withTempCwd(async (cwd) =>
     withFakePiTmp(async (piTmp) => {
       const env = fakePiEnv({
@@ -191,7 +191,7 @@ test("/pi:run --verbose emits step transitions while polling", async () => {
   );
 });
 
-test("/pi:run with a failing pi run records 'failed' and exits non-zero", async () => {
+test("/pi:agent with a failing pi run records 'failed' and exits non-zero", async () => {
   await withTempCwd(async (cwd) =>
     withFakePiTmp(async (piTmp) => {
       const env = fakePiEnv({

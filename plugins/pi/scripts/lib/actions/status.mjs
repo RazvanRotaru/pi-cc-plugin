@@ -20,7 +20,7 @@ export default async function status(argv, ctx) {
 
   const jobs = await reconcileAllJobs(stateFile);
   if (jobs.length === 0) {
-    ctx.stdout.write("pi-cc-plugin alive — no jobs tracked yet. Try /pi:run.\n");
+    ctx.stdout.write("pi-cc-plugin alive — no jobs tracked yet. Try /pi:agent.\n");
     return 0;
   }
   const piStatuses = await Promise.all(jobs.map((j) => readPiStatus(j.pi_status_dir)));
