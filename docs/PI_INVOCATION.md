@@ -3,12 +3,12 @@
 How `pi-cc-plugin` calls the [`pi`](https://github.com/mariozechner/pi-coding-agent)
 CLI with [`pi-subagents`](https://github.com/nicobailon/pi-subagents) installed.
 
-> **Status: PARTIALLY VERIFIED 2026-04-25.** Verified against
-> `@mariozechner/pi-coding-agent@0.70.2` source + bundled docs (no live run —
-> sandbox is on Node 18, pi requires Node ≥20). Items still marked
-> **TBD-VERIFY** need confirmation against a live pi run before the first
-> dogfood release. The broker's current adapter assumed a `pi exec '<json>'`
-> form that does **not** exist in real pi — see §2 for the correction.
+> **Status: VERIFIED & SHIPPING.** All §1–§8 items confirmed against live
+> pi (`@mariozechner/pi-coding-agent@0.70.2`+, `pi-subagents`@latest) and
+> exercised by the broker in production. The original "TBD-VERIFY" items
+> from this doc's pre-implementation draft have been resolved; this file
+> is now reference for the protocol shape, not a checklist. The
+> `pi --mode rpc` adapter rewrite mentioned below has shipped.
 
 ## 1. Binary resolution (`scripts/lib/pi-spawn.mjs`)
 
@@ -48,11 +48,12 @@ Framing: strict JSONL with `\n` only (per `docs/rpc.md`). Do **not** use
 Node's `readline` — it splits on `U+2028`/`U+2029` which can appear
 inside JSON strings. The broker has its own line splitter.
 
-> **Broker status:** the current `scripts/lib/pi-cli.mjs` was built against
-> the old (wrong) assumption. It works fine against the fake-pi fixture
-> (which mimics that contract), so all 91 tests pass — but it will not
-> work against real pi without an adapter rewrite. That refactor is the
-> first thing M10 dogfooding will surface; tracking as a follow-up.
+> **Broker status (resolved):** `scripts/lib/pi-cli.mjs` now spawns
+> `pi --mode rpc --no-session`, sends a `prompt` frame containing
+> pi-subagents' `/run` slash command (or a `subagent` tool_call for the
+> `--worktree` path), and watches stdout for the
+> `subagent-slash-result` custom message. See the "Dispatch" diagram in
+> the README for the full flow.
 
 ### Subagent payload shape (VERIFIED 2026-04-25 from nicobailon/pi-subagents source)
 
@@ -91,11 +92,8 @@ Two locations exist and they serve different purposes:
 | `~/.pi/agent/sessions/<parent>/subagent-artifacts/<runId>_<agent>_*` | Per-agent input/meta/output artifacts (for the agent manager TUI). |
 
 The `<tmpdir>/pi-subagents-uid-<uid>/async-subagent-runs/<runId>/` path
-is the canonical answer for `--bg` runs and what the broker should
-read. The fake-pi fixture's
-`<tmpdir>/pi-subagents-user/async-subagent-runs/...` is close but the
-suffix is `uid-<uid>` (numeric uid), not `user`. Adjust during the M4
-broker rewrite.
+is the canonical answer for `--bg` runs and what the broker reads.
+The fake-pi fixture mirrors this layout exactly (numeric uid suffix).
 
 ### status.json shape — VERIFIED 2026-04-25 via live run
 
@@ -132,8 +130,9 @@ broker rewrite.
 ```
 
 Note: `state` uses `"complete"` (not `"completed"`) and `"failed"`.
-Steps' `status` follows the same vocabulary. The fake-pi fixture
-emits `"completed"` and needs adjustment.
+Steps' `status` follows the same vocabulary. The broker normalizes via
+`mapPiState` in `pi-status-reader.mjs` — both spellings map to the
+broker's `"completed"` token.
 
 ### Capturing the run id — VERIFIED 2026-04-25 via live run
 
@@ -197,45 +196,57 @@ nothing — they sit alongside the builtins.
 
 ## 3. Where pi writes durable state
 
-**TBD-VERIFY.** The broker's fake-pi fixture writes:
+**VERIFIED 2026-04-29.** Pi-subagents writes per-run artifacts to
+`<tmpdir>/pi-subagents-uid-<uid>/async-subagent-runs/<runId>/`:
 
-```
-<tmpdir>/pi-subagents-<scope>/async-subagent-runs/<run-id>-<slug>/
-  status.json        # current state of the run
-  events.jsonl       # one JSON event per line
-  log.md             # human-readable transcript
-  result.md          # final output (only after completion)
-```
+| File | Written by | Read by broker via |
+|---|---|---|
+| `status.json` | pi-subagents lifecycle | `readPiStatus` |
+| `events.jsonl` | pi-subagents lifecycle + child pi (re-emitted) | `readPiEvents` |
+| `output-N.log` | child pi stdout (per step) | `readPiResult` |
+| `subagent-log-<runId>.md` | pi-subagents (human-readable) | `readPiLog` |
+
+`events.jsonl` is the richest signal: one JSON object per line covering
+`subagent.run.started` / `.completed`, `subagent.step.started`,
+`subagent.parallel.*`, `subagent.control`, plus every event the child
+pi emits in `--mode json` (tool calls, message chunks, usage, errors)
+re-tagged with `subagentSource: "child"`. The broker forwards it raw
+to `/pi:status` so the orchestrator can interpret without any
+broker-side summarization.
 
 Pi itself writes session data under `~/.pi/agent/` (configDir from
-`package.json#piConfig.configDir`). The pi-subagents extension may write
-its run dirs there or under `<tmpdir>/...`. Confirm during dogfood.
+`package.json#piConfig.configDir`). The broker doesn't read this — pi
+manages it.
 
 ## 4. Run-id emission on launch
 
-**SUPERSEDED.** Under `--mode rpc`, run identification comes from JSON
-events on stdout, not stdout markers. The relevant events are
-`tool_execution_start` (which carries `toolCallId`) and the eventual
-`tool_execution_end`. Map the subagent's run id by reading the
-`tool_execution_end.result` payload. This requires reshaping
-`scripts/lib/pi-cli.mjs#collectMarkers` from line-prefix parsing to
-JSON-event parsing.
+**VERIFIED & SHIPPING.** Run identification comes from JSON events on
+pi's RPC stdout, not stdout markers. Two cases:
 
-The fake-pi fixture's `run-id:` / `status-dir:` markers are a
-test-fixture convention only — they don't exist on real pi.
+| Dispatch path | Event the broker watches for | Fields it pulls |
+|---|---|---|
+| Slash form (default `/run …`) | `message_start` / `message_end` with `role: "custom"`, `customType: "subagent-slash-result"` | `details.result.details.asyncId`, `.asyncDir` |
+| Tool_call form (`--worktree`) | `tool_execution_end` with `toolName: "subagent"` | `result.details.asyncId`, `.asyncDir` |
+
+See `scripts/lib/pi-cli.mjs#captureRun` for the implementation. Once
+captured, the broker closes stdin so pi's parent agent loop
+short-circuits — the detached subagent continues independently.
 
 ## 5. Cancel semantics
 
-**TBD-VERIFY.** Under `--mode rpc`, pi exposes a `cancel` JSON-RPC command
-(see `docs/rpc.md`). The broker's cancel flow becomes:
+**VERIFIED & SHIPPING.** Under `--bg`, the parent pi process exits
+right after emitting `subagent-slash-result` (the broker closes
+stdin). The actual subagent work runs in a detached child pi tree,
+not in the dispatching pi. So cancel is a process-tree problem, not
+an RPC one.
 
-1. Send `{"type":"cancel"}` on stdin to the running pi process.
-2. Wait for the corresponding `response`.
-3. Fall back to SIGTERM → SIGKILL if pi doesn't respond.
-
-The current cancel implementation talks via `piExec(...)` to a separate
-pi process; that's wrong for an `--mode rpc` setup, where you keep the
-same stdio pipe open. Refactor alongside §2.
+`scripts/lib/process-tree.mjs` walks the running process list looking
+for any process whose argv mentions the runId, then SIGTERMs them
+(grace `PI_BROKER_SIGTERM_GRACE_MS`, default 5s) and escalates to
+SIGKILL if they don't exit. The broker also marks the job
+`cancelled` in `state.json` immediately so subsequent `/pi:status`
+reads reconcile correctly even if pi-subagents' `status.json` freezes
+mid-update.
 
 ## 6. Pi MCP config
 
@@ -319,18 +330,22 @@ Operationally for `pi-cc-plugin`: the broker doesn't need pi auth — pi
 manages it. Tell users to run `pi` once and `/login`, or set the env var
 their model uses.
 
-## 9. Verification checklist (before first dogfood release)
+## 9. Verification checklist — DONE
 
-Hard items the rewrite hinges on:
+Original pre-implementation checklist, all resolved:
 
-- [ ] §2 confirm `pi --mode rpc --no-session` works from a clean install.
-- [ ] §2 confirm the JSON-RPC shape needed to invoke the `subagent` tool.
-- [ ] §3 confirm where `pi-subagents` writes its per-run state dir.
-- [ ] §4 capture run-id from `tool_execution_*` events.
-- [ ] §5 confirm `cancel` command behavior.
-- [ ] §6 confirm pi's MCP config filename.
-- [ ] §7 swap broker detection from `list-extensions` to FS check.
+- [x] §2 `pi --mode rpc --no-session` works from a clean install.
+- [x] §2 JSON-RPC dispatch shape (slash + tool_call paths) verified.
+- [x] §3 per-run state dir confirmed at
+      `<tmpdir>/pi-subagents-uid-<uid>/async-subagent-runs/<runId>/`.
+- [x] §4 run-id captured from the `subagent-slash-result` custom
+      message (slash form) or `tool_execution_end` (tool form).
+- [x] §5 cancel = process-tree walk by runId (not an RPC command).
+- [x] §6 pi's MCP wiring is per-agent via the `tools:` line
+      (`mcp:server/tool` entries) — no separate config file needed.
+- [x] §7 broker uses `pi list` to detect the npm-managed install.
 
-After verification: replace the fake-pi fixture's marker-based protocol
-with a JSON-RPC harness so CI continues to drive the broker through the
-same surface real pi exposes.
+The fake-pi fixture mirrors the verified RPC + on-disk shape, so the
+offline CI suite drives the broker through the same surface real pi
+exposes (modulo tiny synthetic event streams; see
+`tests/fixtures/fake-pi.mjs#runFinalize`).

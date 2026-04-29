@@ -12,17 +12,22 @@ model zoo, while keeping the orchestrator session itself snappy and
 non-blocking.
 
 ```text
-┌─ Claude Code (orchestrator, Claude) ─────────────────────────┐
-│                                                               │
-│  /pi:agent worker "fix the auth bug" --model openrouter/...  │
-│       │                                                       │
-│       ▼                                                       │
-│   pi-broker → pi --mode rpc → pi-subagents → child pi process │
-│       │                                            │          │
-│       ▼                                            ▼          │
-│   .pi-cc-plugin/state.json          (any model pi supports)   │
-│                                                               │
-└───────────────────────────────────────────────────────────────┘
+┌─ Claude Code (orchestrator, Claude) ──────────────────────────────┐
+│                                                                    │
+│  /pi:agent worker "fix the auth bug" --model openrouter/...        │
+│       │                                                            │
+│       ▼                                                            │
+│   pi-broker  ──►  pi --mode rpc  ──►  pi-subagents  ──►  child pi  │
+│       │                                    │                │      │
+│       ▼                                    ▼                ▼      │
+│   .pi-cc-plugin/state.json    /tmp/.../async-subagent-runs/<id>/   │
+│   (job ledger)                  status.json + events.jsonl + log   │
+│                                                                    │
+│       ▲                                    │                       │
+│       └────  /pi:status reads both ◄───────┘                       │
+│              (events stream forwarded raw to the orchestrator)     │
+│                                                                    │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
 - **Foreground by default.** `/pi:agent` waits for the subagent to finish
@@ -40,6 +45,9 @@ non-blocking.
   dynamic via `--mcp foo/bar`.
 - **Auto-reconcile.** `state.json` syncs against pi's view on every
   read — finished jobs always show as completed.
+- **Raw event stream in `/pi:status`.** Pi-subagents' `events.jsonl`
+  is forwarded verbatim — step transitions, child tool calls, errors —
+  so the orchestrator sees what's actually happening, not just `running`.
 
 ---
 
@@ -124,7 +132,7 @@ prints the final output once worker is done.
 |---|---|
 | `/pi:setup [--yes]` | Verify pi + pi-subagents + provider auth, scaffold `.pi/agents/`, gitignore `.pi-cc-plugin/`. Idempotent. |
 | `/pi:agent <agent> <task…> [flags]` | Dispatch one task to one pi agent. Need to fan out? Call `/pi:agent` multiple times in one assistant turn — Claude Code runs tool calls in parallel. |
-| `/pi:status [id]` | Without id: list every tracked job. With id: inspect one. Auto-reconciles `state.json` against pi. |
+| `/pi:status [id]` | Without id: list every tracked job. With id: inspect one. Auto-reconciles `state.json` against pi **and forwards the raw event stream** (`subagent.run.started`, `subagent.step.started`, child tool calls, `subagent.run.completed`, …) so the orchestrator sees more than just `running`. |
 | `/pi:result <id>` | Print the final markdown output. |
 | `/pi:cancel <id>` | SIGTERM pi-subagents' parent + every detached worker carrying the runId; SIGKILL after 5s. |
 
@@ -151,6 +159,54 @@ Every job has two IDs:
 
 `/pi:status`, `/pi:result`, `/pi:cancel` accept either, plus any
 unambiguous prefix of the pi run id.
+
+### What `/pi:status` shows you
+
+Two files on disk back every status query, and both get reflected in the output:
+
+```text
+                    ┌──────────────── /pi:status job-001 ────────────────┐
+                    │                                                     │
+       state.json   │   .pi-cc-plugin/state.json   ← broker ledger        │
+       per-job ─────┤        (id, agent, task, started, completed)        │
+                    │                                                     │
+                    │   /tmp/pi-subagents-uid-<uid>/async-subagent-runs/  │
+       pi-subagents │     <runId>/                                        │
+       per-run ─────┤        ├─ status.json     ← per-step state          │
+                    │        └─ events.jsonl    ← raw event stream        │
+                    │                                                     │
+                    └─────────────────────────────────────────────────────┘
+```
+
+Sample output (single-job inspect):
+
+```text
+**job-001** · single · running
+  pi-run-id: `8f3a2c1b-9e7d-4a6b-8c1d-2e3f4a5b6c7d`
+  agents: worker
+  task: summarize the auth module
+  started: 2026-04-29T19:00:12.503Z
+  steps:
+    - worker: running
+  events:
+    {"type":"subagent.run.started","ts":1777834812,"runId":"8f3a..."}
+    {"type":"subagent.step.started","ts":1777834813,"runId":"8f3a...","stepIndex":0,"agent":"worker"}
+    {"type":"tool_call","name":"read","args":{"path":"src/auth.ts"},"subagentSource":"child","subagentAgent":"worker"}
+    {"type":"tool_call","name":"grep","args":{"pattern":"export"},"subagentSource":"child","subagentAgent":"worker"}
+```
+
+The events block is **raw pass-through** — no summarization, no
+filtering. The orchestrator (Claude) parses it and decides what to
+surface to you. Common event types pi-subagents emits:
+
+| Type | Source | Carries |
+|---|---|---|
+| `subagent.run.started` / `.completed` | pi-subagents | `runId`, `success` |
+| `subagent.step.started` | pi-subagents | `stepIndex`, `agent` |
+| `subagent.parallel.started` / `.completed` | pi-subagents | step group + agent list |
+| `subagent.control` | pi-subagents | steering / cancel notices |
+| `tool_call`, `message_*`, `usage`, … | child pi (re-emitted) | tagged `subagentSource: "child"` |
+| `subagent.child.stdout` / `.stderr` | child pi (raw lines) | unstructured fallback |
 
 ---
 
@@ -293,44 +349,81 @@ Foreground by default keeps the orchestrator in the loop between steps.
 
 ## How it works
 
+### Dispatch (`/pi:agent`)
+
 ```text
-┌─ Claude Code session ────────────────────────────────────────┐
-│                                                               │
-│  /pi:* slash command                                          │
-│       │                                                       │
-│       ▼                                                       │
-│  plugins/pi/scripts/pi-broker.mjs <action> <args…>            │
-│       │                                                       │
-│       ▼                                                       │
-│  args.mjs (parse) → pi-cli.mjs (spawn pi --mode rpc) ──┐      │
-│                                                         │      │
-│  ┌──────────────────────────────────────────────────────┴───┐  │
-│  │ pi (Node ≥20) loads pi-subagents extension              │  │
-│  │   handles /run slash command                            │  │
-│  │   OR direct subagent tool_call (--worktree path)        │  │
-│  │   emits subagent-slash-result with asyncId+asyncDir     │  │
-│  └──────────────────────────────────────────────────────┬───┘  │
-│                                                         │      │
-│       ◀─ broker captures asyncId, closes stdin ──────── ┘      │
-│       │                                                       │
-│       ▼                                                       │
-│  state.json patch + /tmp/pi-subagents-uid-<uid>/...           │
-│                                                               │
-└───────────────────────────────────────────────────────────────┘
+┌─ Claude Code session ────────────────────────────────────────────┐
+│                                                                   │
+│  /pi:agent worker "task"                                          │
+│       │                                                           │
+│       ▼                                                           │
+│  plugins/pi/scripts/pi-broker.mjs run worker "task" [--bg|--wait] │
+│       │                                                           │
+│       ▼                                                           │
+│  args.mjs (parse) → pi-cli.mjs (spawn pi --mode rpc) ──┐          │
+│                                                         │          │
+│  ┌──────────────────────────────────────────────────────┴───┐      │
+│  │ pi (Node ≥20) loads pi-subagents extension              │      │
+│  │   handles /run slash command                            │      │
+│  │   OR direct subagent tool_call (--worktree path)        │      │
+│  │   spawns child pi → writes status.json + events.jsonl   │      │
+│  │   emits subagent-slash-result {asyncId, asyncDir}       │      │
+│  └──────────────────────────────────────────────────────┬───┘      │
+│                                                         │          │
+│       ◀─ broker captures asyncId, closes stdin ──────── ┘          │
+│       │                                                           │
+│       ▼                                                           │
+│  state.json patch (job-NNN ↔ runId ↔ asyncDir)                    │
+│       │                                                           │
+│       ├──── --wait ────► poll status.json until terminal,         │
+│       │                  print final output, return               │
+│       └──── --bg   ────► return immediately with job id           │
+│                                                                   │
+└───────────────────────────────────────────────────────────────────┘
+```
+
+### Status / result (`/pi:status`, `/pi:result`)
+
+```text
+┌─ Claude Code session ─────────────────────────────────────────┐
+│                                                                │
+│  /pi:status [job-id]                                           │
+│       │                                                        │
+│       ▼                                                        │
+│  pi-broker.mjs status [id]                                     │
+│       │                                                        │
+│       │   reconcile.mjs                                        │
+│       │      ├── read .pi-cc-plugin/state.json                 │
+│       │      └── read /tmp/.../async-subagent-runs/<id>/       │
+│       │           ├── status.json    → state, steps, errors    │
+│       │           └── events.jsonl   → raw event stream        │
+│       ▼                                                        │
+│  render.mjs → markdown block per job                           │
+│       │      header · pi-run-id · steps · errors · events:     │
+│       ▼                                                        │
+│  Claude reads, decides what to surface                         │
+│                                                                │
+└────────────────────────────────────────────────────────────────┘
 ```
 
 ### State on disk
 
 | Path | Purpose | Owner |
 |---|---|---|
-| `./.pi-cc-plugin/state.json` | Broker's job ledger (internal_id, runId, kind, agents, status) | `pi-cc-plugin` |
-| `/tmp/pi-subagents-uid-<uid>/async-subagent-runs/<runId>/` | Pi-subagents' run state — `status.json`, `events.jsonl`, `output-N.log`, `subagent-log-<runId>.md` | `pi-subagents` |
+| `./.pi-cc-plugin/state.json` | Broker's job ledger: `internal_id`, `pi-run-id`, `agents`, `task`, `status`, `pi_status_dir` | `pi-cc-plugin` |
+| `/tmp/pi-subagents-uid-<uid>/async-subagent-runs/<runId>/status.json` | Per-run state: `state`, per-step `status` / `model` / `error`, timing | `pi-subagents` |
+| `/tmp/pi-subagents-uid-<uid>/async-subagent-runs/<runId>/events.jsonl` | One JSON event per line: `subagent.*` lifecycle events + child pi tool calls (re-emitted with `subagentSource: "child"`) | `pi-subagents` |
+| `/tmp/pi-subagents-uid-<uid>/async-subagent-runs/<runId>/output-N.log` | Per-step stdout (concatenated for `/pi:result`) | `pi-subagents` |
+| `/tmp/pi-subagents-uid-<uid>/async-subagent-runs/<runId>/subagent-log-<runId>.md` | Human-readable transcript | `pi-subagents` |
 | `~/.pi/agent/auth.json` | Provider credentials (`0600`) | pi |
 | `~/.pi/agent/extensions/`, `<npm-global>/pi-subagents/` | Extension code | pi |
 
-The plugin never touches pi's state; it only reads. The broker's
+The plugin never writes pi's state; it only reads. The broker's
 `state.json` auto-reconciles with pi's `status.json` on every
-`/pi:status` and `/pi:result`.
+`/pi:status` and `/pi:result`. `events.jsonl` is read in full each
+call (`readPiEvents` accepts an optional byte cursor for incremental
+tails — currently unused since `/pi:status` is happy to dump the full
+stream and let the orchestrator interpret).
 
 ### Provider matrix
 
@@ -450,7 +543,10 @@ works end-to-end before dogfooding model dispatches.
 
 **Stable** — broker dispatch (`/pi:agent`) with foreground polling and
 optional `--verbose` step streaming, `--bg` for detached runs, status,
-result, cancel, worktree (via tool_call path), `--mcp`, auto-reconcile.
+result, cancel, worktree (via tool_call path), `--mcp`, auto-reconcile,
+**raw `events.jsonl` forwarding through `/pi:status`** so the
+orchestrator gets per-step transitions and child tool calls (not just
+`running`).
 
 **Removed** — `/pi:chain` and `/pi:parallel`. Use multiple `/pi:agent`
 calls from the orchestrator instead: parallel falls out naturally
