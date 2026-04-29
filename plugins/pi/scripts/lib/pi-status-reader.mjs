@@ -21,6 +21,60 @@ import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 /**
+ * Read events.jsonl from a pi-subagents async dir.
+ *
+ * Pi-subagents emits one JSON event per line (`subagent.run.started`,
+ * `subagent.step.started`, `subagent.run.completed`, child pi tool_calls
+ * tagged with `subagentSource: "child"`, etc.). Pass-through to the
+ * orchestrator — Claude reads the raw events and decides what to surface.
+ *
+ * @param {string} statusDir — pi-subagents asyncDir
+ * @param {{ since?: number }} [opts] — byte offset from a prior read
+ * @returns {Promise<{ events: object[], cursor: number } | null>}
+ *   `null` if statusDir missing or events.jsonl unreadable. `cursor` is
+ *   the new byte offset to pass back as `since` next time.
+ *
+ * Cursor semantics:
+ *   - no `since` → return the full log
+ *   - `since` past EOF (file shrunk/recreated) → reset: cursor = file.length
+ *   - tail with no trailing newline → don't consume the partial line
+ *   - malformed JSON lines are skipped silently
+ */
+export async function readPiEvents(statusDir, { since } = {}) {
+  if (!statusDir) return null;
+  let buf;
+  try {
+    buf = await readFile(join(statusDir, "events.jsonl"));
+  } catch {
+    return null;
+  }
+  if (typeof since === "number" && buf.length < since) {
+    return { events: [], cursor: buf.length };
+  }
+  const start = typeof since === "number" ? since : 0;
+  if (buf.length <= start) {
+    return { events: [], cursor: buf.length };
+  }
+  const tail = buf.subarray(start);
+  // Stop at the last newline so we never half-parse a line pi-subagents
+  // is mid-write on. Anything after the last \n is left for next call.
+  const lastNl = tail.lastIndexOf(0x0a);
+  if (lastNl === -1) return { events: [], cursor: start };
+  const cursor = start + lastNl + 1;
+  const events = [];
+  for (const line of tail.subarray(0, lastNl).toString("utf8").split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      events.push(JSON.parse(trimmed));
+    } catch {
+      // skip malformed
+    }
+  }
+  return { events, cursor };
+}
+
+/**
  * Read status.json from a pi-subagents async dir.
  */
 export async function readPiStatus(statusDir) {

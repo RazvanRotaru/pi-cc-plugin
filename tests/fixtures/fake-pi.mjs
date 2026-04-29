@@ -230,6 +230,26 @@ function runFinalize({ asyncDir, runId, slash, scenario }) {
     `# fake-pi log for ${runId}\n\n${buildOutput(slash)}\n`,
     "utf8",
   );
+  // Mimic pi-subagents' events.jsonl tail. Real pi emits many more
+  // events (one per child tool call, etc.); the broker just dumps them
+  // through, so a tiny synthetic stream is enough to exercise the path.
+  const ts = Date.now();
+  const firstAgent = (slash.steps?.[0]?.agent) ?? "worker";
+  const evLines = [
+    { type: "subagent.run.started", ts, runId },
+    { type: "subagent.step.started", ts, runId, stepIndex: 0, agent: firstAgent },
+    {
+      type: "subagent.run.completed",
+      ts,
+      runId,
+      success: scenario !== "fail",
+    },
+  ];
+  writeFileSync(
+    join(asyncDir, "events.jsonl"),
+    `${evLines.map((e) => JSON.stringify(e)).join("\n")}\n`,
+    "utf8",
+  );
   writeStatus(asyncDir, {
     runId,
     mode: slash.mode,
