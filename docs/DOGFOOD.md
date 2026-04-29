@@ -82,6 +82,33 @@ exactly what we passed.
 
 Verify: `cat /tmp/pi-subagents-uid-$(id -u)/async-subagent-runs/<uuid>/status.json | jq '.steps[].model'`.
 
+## 3a. `/pi:status` forwards the event stream
+
+After step 2 finishes (or while it's still running):
+
+```
+/pi:status job-001
+```
+
+Expected output ends with an `events:` block, one JSON object per line,
+straight from pi-subagents' `events.jsonl`. At minimum:
+
+```text
+  events:
+    {"type":"subagent.run.started",...}
+    {"type":"subagent.step.started","stepIndex":0,"agent":"worker",...}
+    {"type":"subagent.run.completed","success":true,...}
+```
+
+For a still-running job you should also see child pi tool calls
+re-emitted with `subagentSource: "child"` (e.g. `tool_call`,
+`message_end`, `usage`). No summarization happens broker-side — the
+orchestrator (Claude) parses the stream and decides what to surface.
+
+If the `events:` block is absent:
+- check `<asyncDir>/events.jsonl` exists (`/tmp/pi-subagents-uid-$(id -u)/async-subagent-runs/<runId>/`)
+- confirm `pi-subagents` version is recent enough to write per-run events (any version since the broker shipped works — but a very old fork might not)
+
 ## 4. Fan out via multiple `/pi:agent` calls
 
 In one assistant turn (Claude Code runs tool calls concurrently):

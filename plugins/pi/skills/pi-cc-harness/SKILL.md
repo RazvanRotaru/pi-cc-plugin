@@ -61,6 +61,13 @@ every ~30s — pi's status doesn't update that often anyway.
 poll and see `completed`, that's authoritative even if you didn't run any
 explicit cancel/result command in between.
 
+It also forwards pi-subagents' `events.jsonl` raw under an `events:`
+block — `subagent.run.started`, `subagent.step.started`, child pi
+`tool_call`s tagged `subagentSource: "child"`, `subagent.run.completed`,
+etc. Read those events to figure out what the specialist is *actually*
+doing right now (e.g. "still grepping" vs "writing the patch") before
+you decide whether to wait, nudge, or cancel.
+
 ## When `/pi:cancel` is the right move
 
 - Specialist is hung past its expected window. Cancel, escalate to user

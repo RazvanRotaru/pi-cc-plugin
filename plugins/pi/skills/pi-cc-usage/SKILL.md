@@ -89,8 +89,10 @@ accept any unambiguous prefix of the pi run id, so `cafef0` matches
   gitignores it on first write.
 - Pi-subagents writes per-run artifacts to
   `<tmpdir>/pi-subagents-uid-<uid>/async-subagent-runs/<runId>/`.
-  The plugin reads `status.json`, `output-N.log`, and
-  `subagent-log-<runId>.md` from there.
+  The plugin reads `status.json`, `events.jsonl`, `output-N.log`, and
+  `subagent-log-<runId>.md` from there. `/pi:status` forwards
+  `events.jsonl` raw — one event per line — so you can see step
+  transitions and child pi tool calls without parsing the log.
 - Auto-reconciliation: every read (`/pi:status`, `/pi:result`,
   `/pi:cancel`) syncs `state.json` against pi's status. Stale `running`
   entries get back-filled to `completed` automatically.
