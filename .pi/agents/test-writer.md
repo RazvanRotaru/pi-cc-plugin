@@ -1,7 +1,7 @@
 ---
 name: test-writer
 description: Test-writer — author the test suite that pins down the behavior an implementer will then build to.
-model: anthropic/claude-sonnet-4-6
+model: fireworks/models/kimi-k2p6
 thinking: medium
 tools: read, write, edit, bash, grep, find
 skills: clean-code

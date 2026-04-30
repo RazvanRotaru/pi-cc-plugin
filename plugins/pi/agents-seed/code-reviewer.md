@@ -1,7 +1,7 @@
 ---
 name: code-reviewer
 description: Code-reviewer — adversarial review of the implementer's diff against the architect's brief.
-model: anthropic/claude-opus-4-7
+model: fireworks/models/kimi-k2p6
 thinking: high
 tools: read, bash, grep, find
 skills: clean-code

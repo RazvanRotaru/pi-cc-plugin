@@ -1,7 +1,7 @@
 ---
 name: implementer
 description: Implementer — write the production code that makes the agreed test suite pass.
-model: anthropic/claude-sonnet-4-6
+model: fireworks/models/kimi-k2p6
 thinking: medium
 tools: read, write, edit, bash, grep, find
 skills: clean-code
